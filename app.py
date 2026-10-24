@@ -139,7 +139,7 @@ menu_options = {
 selected_label = st.sidebar.selectbox("🧭 الانتقال السريع بين الأقسام", list(menu_options.keys()))
 menu = menu_options[selected_label]
 
-# === 💾 قسم النسخ الاحتياطي في القائمة الجانبية ===
+# === 💾 زر النسخ الاحتياطي في القائمة الجانبية ===
 st.sidebar.markdown("---")
 st.sidebar.subheader("💾 النسخ الاحتياطي للبيانات")
 if os.path.exists(DB_FILE):
@@ -151,7 +151,7 @@ if os.path.exists(DB_FILE):
         data=excel_bytes,
         file_name=f"LubaNur_Backup_{current_date_str}.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        help="اضغط هنا لتنزيل نسخة كاملة من قاعدة البيانات المحدثة على الأيباد أو جهازك"
+        help="انقر لتحميل نسخة كاملة من قاعدة البيانات المحدثة على جهازك أو الأيباد"
     )
 
 st.title("📦 نظام إدارة الطلبيات والمخزون والمصروفات - لبانور / السيف والضياء")
@@ -482,9 +482,40 @@ elif menu == "تتبع التوصيل والشحن":
 elif menu == "تقرير الشحن لشركة الشحن (تقرير الاستلام)":
     st.header("📑 تقرير تسليم الشحنات لشركات الشحن")
     orders_df, _, _ = load_data()
+    
     if not orders_df.empty:
-        selected_cargo = st.selectbox("اختر شركة الشحن", orders_df['Cargo_Company'].unique().tolist())
-        st.dataframe(orders_df[orders_df['Cargo_Company'] == selected_cargo][['Order_ID', 'Date', 'Customer', 'Phone', 'Region', 'Products_Total', 'Shipping_Price', 'Total', 'Bags']], use_container_width=True)
+        col_c1, col_c2 = st.columns(2)
+        with col_c1:
+            selected_cargo = st.selectbox("اختر شركة الشحن", orders_df['Cargo_Company'].unique().tolist())
+        with col_c2:
+            filter_date_option = st.checkbox("فلترة حسب التاريخ؟", value=False)
+            
+        filtered_df = orders_df[orders_df['Cargo_Company'] == selected_cargo]
+        
+        if filter_date_option:
+            rep_date = st.date_input("اختر تاريخ التقرير", datetime.date.today())
+            filtered_df = filtered_df[filtered_df['Date'] == str(rep_date)]
+            
+        st.subheader(f"الطلبات الخاصة بـ: {selected_cargo}")
+        st.dataframe(filtered_df[['Order_ID', 'Date', 'Customer', 'Phone', 'Region', 'Products_Total', 'Shipping_Price', 'Total', 'Bags']], use_container_width=True)
+        
+        if not filtered_df.empty:
+            st.markdown("---")
+            st.subheader("📥 تحميل وتصدير التقرير")
+            
+            excel_output = BytesIO()
+            with pd.ExcelWriter(excel_output, engine='openpyxl') as writer:
+                filtered_df.to_excel(writer, sheet_name="Cargo_Report", index=False)
+            excel_data = excel_output.getvalue()
+            
+            st.download_button(
+                label="📥 تحميل التقرير (Excel)",
+                data=excel_data,
+                file_name=f"Report_{selected_cargo}_{datetime.date.today()}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+        else:
+            st.info("لا توجد طلبيات مطابقة لهذه الفلاتر.")
 
 elif menu == "متابعة التحصيل المالي":
     st.header("💵 متابعة التحصيل المالي")
