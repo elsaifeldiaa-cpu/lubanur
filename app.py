@@ -139,6 +139,21 @@ menu_options = {
 selected_label = st.sidebar.selectbox("🧭 الانتقال السريع بين الأقسام", list(menu_options.keys()))
 menu = menu_options[selected_label]
 
+# === 💾 قسم النسخ الاحتياطي في القائمة الجانبية ===
+st.sidebar.markdown("---")
+st.sidebar.subheader("💾 النسخ الاحتياطي للبيانات")
+if os.path.exists(DB_FILE):
+    with open(DB_FILE, "rb") as f:
+        excel_bytes = f.read()
+    current_date_str = datetime.date.today().strftime("%Y-%m-%d")
+    st.sidebar.download_button(
+        label="📥 تحميل نسخة احتياطية (Backup)",
+        data=excel_bytes,
+        file_name=f"LubaNur_Backup_{current_date_str}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        help="اضغط هنا لتنزيل نسخة كاملة من قاعدة البيانات المحدثة على الأيباد أو جهازك"
+    )
+
 st.title("📦 نظام إدارة الطلبيات والمخزون والمصروفات - لبانور / السيف والضياء")
 st.markdown("---")
 
