@@ -1,0 +1,4 @@
+streamlit
+pandas
+openpyxl
+html2canvas
