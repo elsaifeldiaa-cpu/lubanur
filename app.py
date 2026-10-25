@@ -11,6 +11,43 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
+# === 🔒 نظام حماية كلمة المرور (Password Protection) ===
+PASSWORD_CORRECT = "142025"
+
+if "authenticated" not in st.session_state:
+    st.session_state.authenticated = False
+
+if not st.session_state.authenticated:
+    st.markdown("""
+        <style>
+        .login-container {
+            max-width: 400px;
+            margin: 100px auto;
+            padding: 30px;
+            background: #ffffff;
+            border-radius: 12px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+            direction: rtl;
+            text-align: right;
+            font-family: Tahoma, sans-serif;
+        }
+        </style>
+    """, unsafe_allow_html=True)
+    
+    st.markdown("<h2 style='text-align: center; color: #2c3e50;'>🔐 تسجيل الدخول لنظام لبانور</h2>", unsafe_allow_html=True)
+    st.markdown("<p style='text-align: center; color: #666;'>الرجاء إدخال كلمة المرور للوصول إلى لوحة التحكم</p>", unsafe_allow_html=True)
+    
+    entered_password = st.text_input("كلمة المرور (Password)", type="password", key="login_pass")
+    
+    if st.button("دخول (Login)", use_container_width=True):
+        if entered_password == PASSWORD_CORRECT:
+            st.session_state.authenticated = True
+            st.success("✅ تم تسجيل الدخول بنجاح!")
+            st.rerun()
+        else:
+            st.error("❌ كلمة المرور غير صحيحة! حاول مرة أخرى.")
+    st.stop()
+
 # === تخصيص CSS إضافي لمظهر راقي وعصري (Elite UI) ===
 st.markdown("""
     <style>
@@ -170,6 +207,7 @@ menu_options = {
     "⏳ الطلبات قيد التحضير": "الطلبات التي لم يتم تحضيرها (Pending Preparation)",
     "🚚 تتبع التوصيل والشحن": "تتبع التوصيل والشحن",
     "📑 تقرير الشحن (شركات الشحن)": "تقرير الشحن لشركة الشحن (تقرير الاستلام)",
+    "📅 تقرير الطلبات للفترة مع الأصناف": "تقرير الطلبات للفترة مع الأصناف",
     "💵 متابعة التحصيل المالي": "متابعة التحصيل المالي",
     "✏️ تعديل وحذف الفواتير": "تعديل وحذف الفواتير (Edit & Delete)",
     "🖨️ فاتورة العميل (Compact)": "فاتورة العميل (Compact Receipt)",
@@ -182,9 +220,9 @@ menu_options = {
 selected_label = st.sidebar.selectbox("🧭 الانتقال السريع بين الأقسام", list(menu_options.keys()))
 menu = menu_options[selected_label]
 
-# === 💾 زر النسخ الاحتياطي في القائمة الجانبية ===
+# === 💾 زر النسخ الاحتياطي وتسجيل الخروج في القائمة الجانبية ===
 st.sidebar.markdown("---")
-st.sidebar.subheader("💾 النسخ الاحتياطي للبيانات")
+st.sidebar.subheader("💾 النسخ الاحتياطي والأمان")
 if os.path.exists(DB_FILE):
     with open(DB_FILE, "rb") as f:
         excel_bytes = f.read()
@@ -196,6 +234,10 @@ if os.path.exists(DB_FILE):
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         help="انقر لتحميل نسخة كاملة من قاعدة البيانات المحدثة على جهازك أو الأيباد"
     )
+
+if st.sidebar.button("🔒 تسجيل الخروج (Logout)"):
+    st.session_state.authenticated = False
+    st.rerun()
 
 st.title("📦 نظام إدارة الطلبيات والمخزون والمصروفات - لبانور / السيف والضياء")
 st.markdown("---")
@@ -574,7 +616,6 @@ elif menu == "تقرير الشحن لشركة الشحن (تقرير الاست
         st.markdown("---")
         
         if not filtered_df.empty:
-            # استخدام .values لاستخراج القيم وتجنب مشاكل تطابق الفهارس (Index Mismatch / NaN)
             def get_col_values_arr(df, possible_names):
                 for name in possible_names:
                     if name in df.columns:
@@ -683,6 +724,62 @@ elif menu == "تقرير الشحن لشركة الشحن (تقرير الاست
             )
         else:
             st.info(f"لا توجد طلبيات مسجلة لشركة الشحن ({selected_cargo}) في تاريخ ({rep_date}).")
+    else:
+        st.info("لا توجد طلبيات مسجلة في النظام بعد.")
+
+elif menu == "تقرير الطلبات للفترة مع الأصناف":
+    st.header("📅 تقرير الطلبات الشامل خلال فترة زمنية محددة (مع تفاصيل الأصناف)")
+    
+    col_ref_date_rep, _ = st.columns([1, 4])
+    with col_ref_date_rep:
+        if st.button("🔄 تحديث البيانات (Refresh)", key="ref_date_rep"):
+            st.rerun()
+            
+    orders_df, _, _ = load_data()
+    
+    if not orders_df.empty:
+        col_d1, col_d2 = st.columns(2)
+        with col_d1:
+            start_date = st.date_input("من تاريخ (Start Date)", datetime.date.today(), key="rep_start_date")
+        with col_d2:
+            end_date = st.date_input("إلى تاريخ (End Date)", datetime.date.today(), key="rep_end_date")
+            
+        orders_df['Date_Only'] = pd.to_datetime(orders_df['Date'], errors='coerce').dt.date
+        date_filtered_df = orders_df[(orders_df['Date_Only'] >= start_date) & (orders_df['Date_Only'] <= end_date)].copy()
+        
+        total_period_orders = len(date_filtered_df)
+        total_period_products = date_filtered_df['Products_Total'].sum() if not date_filtered_df.empty else 0.0
+        total_period_shipping = date_filtered_df['Shipping_Price'].sum() if not date_filtered_df.empty else 0.0
+        total_period_grand = date_filtered_df['Total'].sum() if not date_filtered_df.empty else 0.0
+        
+        col_mp1, col_mp2, col_mp3, col_mp4 = st.columns(4)
+        col_mp1.metric("إجمالي الطلبات للفترة", total_period_orders)
+        col_mp2.metric("إجمالي المنتجات", f"{total_period_products:.3f} ر.ع")
+        col_mp3.metric("إجمالي الشحن", f"{total_period_shipping:.3f} ر.ع")
+        col_mp4.metric("الإجمالي الكلي", f"{total_period_grand:.3f} ر.ع")
+        
+        st.markdown("---")
+        
+        if not date_filtered_df.empty:
+            view_cols = ['Order_ID', 'Date', 'Customer', 'Phone', 'Region', 'Items_Detail', 'Bags', 'Cargo_Company', 'Products_Total', 'Shipping_Price', 'Total', 'Collection_Status']
+            existing_view_cols = [c for c in view_cols if c in date_filtered_df.columns]
+            
+            st.dataframe(date_filtered_df[existing_view_cols], use_container_width=True)
+            
+            excel_date_output = BytesIO()
+            with pd.ExcelWriter(excel_date_output, engine='openpyxl') as writer:
+                date_filtered_df.drop(columns=['Date_Only'], errors='ignore').to_excel(writer, sheet_name="Orders_Items_Report", index=False)
+            date_excel_data = excel_date_output.getvalue()
+            
+            st.download_button(
+                label="📥 تحميل تقرير الفترة مع الأصناف (Excel)",
+                data=date_excel_data,
+                file_name=f"LubaNur_Orders_Report_{start_date}_to_{end_date}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                key="download_date_range_excel"
+            )
+        else:
+            st.info(f"لا توجد طلبيات مسجلة في الفترة بين ({start_date}) و ({end_date}).")
     else:
         st.info("لا توجد طلبيات مسجلة في النظام بعد.")
 
