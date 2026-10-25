@@ -93,15 +93,17 @@ def init_db():
         stock = pd.read_excel(xls, sheet_name="Stock") if "Stock" in xls.sheet_names else pd.DataFrame(columns=["Item_Name", "Qty"])
         expenses = pd.read_excel(xls, sheet_name="Expenses") if "Expenses" in xls.sheet_names else pd.DataFrame(columns=["Expense_ID", "Date", "Category", "Amount", "Description"])
         
-        expected_cols = ["Order_ID", "Date", "Customer", "Phone", "Region", "Items_Detail", "Products_Total", "Shipping_Price", "Total", "Order_Payment", "Shipping_Payment", "Cargo_Company", "Delivery_Type", "Delivery_Status", "Collection_Status", "Bags"]
-        for col in expected_cols:
+        expected_cols = {
+            "Order_ID": 0, "Date": "غير محدد", "Customer": "غير محدد", "Phone": "غير محدد", 
+            "Region": "غير محدد", "Items_Detail": "غير محدد", "Products_Total": 0.0, 
+            "Shipping_Price": 0.0, "Total": 0.0, "Order_Payment": "غير محدد", 
+            "Shipping_Payment": "غير محدد", "Cargo_Company": "بدون شحن", 
+            "Delivery_Type": "غير محدد", "Delivery_Status": "قيد التحضير", 
+            "Collection_Status": "قيد التحصيل", "Bags": 1
+        }
+        for col, default_val in expected_cols.items():
             if col not in orders.columns:
-                orders[col] = "غير محدد" if col in ["Items_Detail", "Order_Payment", "Shipping_Payment", "Cargo_Company", "Delivery_Type", "Delivery_Status", "Collection_Status"] else 0.0
-        
-        expected_exp_cols = ["Expense_ID", "Date", "Category", "Amount", "Description"]
-        for col in expected_exp_cols:
-            if col not in expenses.columns:
-                expenses[col] = "" if col != "Amount" else 0.0
+                orders[col] = default_val
 
         with pd.ExcelWriter(DB_FILE, engine='openpyxl') as writer:
             orders.to_excel(writer, sheet_name="Orders", index=False)
@@ -115,6 +117,17 @@ def load_data():
     orders = pd.read_excel(xls, sheet_name="Orders")
     stock = pd.read_excel(xls, sheet_name="Stock")
     expenses = pd.read_excel(xls, sheet_name="Expenses") if "Expenses" in xls.sheet_names else pd.DataFrame(columns=["Expense_ID", "Date", "Category", "Amount", "Description"])
+    
+    # تنظيف وتأكيد وجود الأعمدة لتجنب ظهور None
+    if not orders.empty:
+        for col in ["Customer", "Phone", "Region", "Cargo_Company", "Items_Detail"]:
+            if col in orders.columns:
+                orders[col] = orders[col].fillna("غير محدد").astype(str)
+        if "Bags" in orders.columns:
+            orders["Bags"] = pd.to_numeric(orders["Bags"], errors='coerce').fillna(1).astype(int)
+        else:
+            orders["Bags"] = 1
+            
     return orders, stock, expenses
 
 orders_df, stock_df, expenses_df = load_data()
@@ -363,7 +376,7 @@ elif menu == "التقرير المالي التفصيلي (Financial Report)":
     total_sales = orders_df['Total'].sum() if not orders_df.empty else 0.0
     total_products_value = orders_df['Products_Total'].sum() if not orders_df.empty else 0.0
     total_shipping = orders_df['Shipping_Price'].sum() if not orders_df.empty else 0.0
-    total_expenses = expenses_df['Amount'].sum() if not orders_df.empty else 0.0
+    total_expenses = expenses_df['Amount'].sum() if not expenses_df.empty else 0.0
     net_treasury = total_products_value - total_expenses
 
     m1, m2, m3, m4 = st.columns(4)
@@ -528,14 +541,14 @@ elif menu == "تقرير الشحن لشركة الشحن (تقرير الاست
         if not filtered_df.empty:
             display_df = pd.DataFrame()
             display_df['رقم الطلب'] = [f"#{int(x)}" for x in filtered_df['Order_ID']]
-            display_df['العميل'] = filtered_df['Customer']
-            display_df['الهاتف'] = filtered_df['Phone']
-            display_df['المنطقة'] = filtered_df['Region']
+            display_df['العميل'] = filtered_df['Customer'].astype(str)
+            display_df['الهاتف'] = filtered_df['Phone'].astype(str)
+            display_df['المنطقة'] = filtered_df['Region'].astype(str)
             display_df['الأكياس'] = filtered_df['Bags'].astype(str) + " أكياس"
             display_df['قيمة المنتجات'] = filtered_df['Products_Total'].astype(str) + " ر.ع"
             display_df['الشحن'] = filtered_df['Shipping_Price'].astype(str) + " ر.ع"
             display_df['الإجمالي الكلي'] = filtered_df['Total'].astype(str) + " ر.ع"
-            display_df['شركة الشحن'] = filtered_df['Cargo_Company']
+            display_df['شركة الشحن'] = filtered_df['Cargo_Company'].astype(str)
             
             report_html = f"""
             <div style="border: 2px solid #2c3e50; border-radius: 10px; padding: 20px; background-color: #ffffff; direction: rtl; text-align: right; font-family: Tahoma, sans-serif;">
@@ -580,7 +593,6 @@ elif menu == "متابعة التحصيل المالي":
     st.header("💵 متابعة التحصيل المالي وحالات الدفع والشحن")
     orders_df, stock_df, expenses_df = load_data()
     if not orders_df.empty:
-        # عرض الجدول موضحاً حالة دفع الطلب وحالة دفع الشحن والتحصيل
         display_cols = ['Order_ID', 'Date', 'Customer', 'Phone', 'Cargo_Company', 'Products_Total', 'Shipping_Price', 'Order_Payment', 'Shipping_Payment', 'Collection_Status']
         existing_cols = [c for c in display_cols if c in orders_df.columns]
         st.dataframe(orders_df[existing_cols], use_container_width=True)
@@ -604,7 +616,6 @@ elif menu == "متابعة التحصيل المالي":
             orders_df.loc[orders_df['Order_ID'] == sel_coll_id, 'Order_Payment'] = new_order_payment_val
             orders_df.loc[orders_df['Order_ID'] == sel_coll_id, 'Shipping_Payment'] = new_shipping_payment_val
             
-            # تحديث حالة التحصيل الإجمالية تلقائياً بناءً عليهما
             new_coll_status = "مدفوع بالكامل" if (new_order_payment_val == "تم الدفع" and new_shipping_payment_val == "تم دفع الشحن") else "قيد التحصيل"
             orders_df.loc[orders_df['Order_ID'] == sel_coll_id, 'Collection_Status'] = new_coll_status
             
