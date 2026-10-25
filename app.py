@@ -468,22 +468,29 @@ elif menu == "فاتورة العميل (Compact Receipt)":
     if not orders_df.empty:
         selected_order_id = st.selectbox("اختر رقم الطلب", orders_df['Order_ID'].tolist())
         order_row = orders_df[orders_df['Order_ID'] == selected_order_id].iloc[0]
-        st.code(f"""
-=== لبانور - LubaNur ===
+        
+        # تنسيق الأصناف لتظهر في أسطر مستقلة عند النسخ والعرض
+        raw_items = str(order_row['Items_Detail'])
+        formatted_items_text = raw_items.replace(" | ", "\n- ")
+        if formatted_items_text and not formatted_items_text.startswith("-"):
+            formatted_items_text = "- " + formatted_items_text
+
+        receipt_text = f"""=== لبانور - LubaNur ===
 رقم الفاتورة: #{order_row['Order_ID']} | التاريخ: {order_row['Date']}
 العميل: {order_row['Customer']} | الهاتف: {order_row['Phone']}
 المنطقة: {order_row['Region']}
 -----------------------------------
 المنتجات:
-{order_row['Items_Detail']}
+{formatted_items_text}
 -----------------------------------
 قيمة المنتجات: {order_row['Products_Total']} ر.ع
 سعر الشحن: {order_row['Shipping_Price']} ر.ع
 الإجمالي الكلي: {order_row['Total']} ر.ع
 حالة دفع الطلب: {order_row.get('Order_Payment', 'غير محدد')}
 حالة دفع الشحن: {order_row.get('Shipping_Payment', 'غير محدد')}
-شكراً لتعاملكم معنا!
-        """)
+شكراً لتعاملكم معنا!"""
+
+        st.code(receipt_text)
 
 elif menu == "تعديل وحذف الفواتير (Edit & Delete)":
     st.header("✏️ تعديل وحذف الفواتير")
