@@ -72,7 +72,6 @@ def normalize_orders_df(orders):
     if orders.empty:
         return pd.DataFrame(columns=["Order_ID", "Date", "Customer", "Phone", "Region", "Items_Detail", "Products_Total", "Shipping_Price", "Total", "Order_Payment", "Shipping_Payment", "Cargo_Company", "Delivery_Type", "Delivery_Status", "Collection_Status", "Bags"])
     
-    # تنظيف أسماء الأعمدة من المسافات الزائدة أولاً
     orders.columns = [str(c).strip() for c in orders.columns]
     
     rename_map = {
@@ -111,7 +110,7 @@ def normalize_orders_df(orders):
         else:
             if col in ["Customer", "Phone", "Region", "Cargo_Company", "Items_Detail", "Order_Payment", "Shipping_Payment", "Delivery_Type", "Delivery_Status", "Collection_Status", "Date"]:
                 orders[col] = orders[col].fillna(default_val).astype(str)
-                orders[col] = orders[col].replace(["nan", "None", ""], default_val)
+                orders[col] = orders[col].replace(["nan", "None", "", "NaN"], default_val)
             elif col in ["Products_Total", "Shipping_Price", "Total", "Bags", "Order_ID"]:
                 orders[col] = pd.to_numeric(orders[col], errors='coerce').fillna(default_val)
                 if col in ["Bags", "Order_ID"]:
@@ -562,7 +561,6 @@ elif menu == "تقرير الشحن لشركة الشحن (تقرير الاست
             unique_cargo = orders_df['Cargo_Company'].unique().tolist() if 'Cargo_Company' in orders_df.columns else ["بدون شحن"]
             selected_cargo = st.selectbox("اختر شركة الشحن للتقرير المنفصل", unique_cargo, key="cargo_rep_select")
             
-        # مقارنة مرنة للتواريخ (تتجاهل الفروقات بين النص والتاريخ أو الوقت)
         orders_df['Date_Only'] = pd.to_datetime(orders_df['Date'], errors='coerce').dt.date
         filtered_df = orders_df[(orders_df['Cargo_Company'] == selected_cargo) & (orders_df['Date_Only'] == rep_date)].copy()
         
@@ -576,16 +574,34 @@ elif menu == "تقرير الشحن لشركة الشحن (تقرير الاست
         st.markdown("---")
         
         if not filtered_df.empty:
+            # دالة مساعدة آمنة للبحث عن الأعمدة واستخراج قيمها بشكل مضمون لمنع ظهور NaN
+            def get_col_values(df, possible_names):
+                for name in possible_names:
+                    if name in df.columns:
+                        return df[name].fillna("غير محدد").astype(str)
+                return pd.Series(["غير محدد"] * len(df))
+
             display_df = pd.DataFrame()
-            display_df['رقم الطلب'] = [f"#{int(x)}" for x in filtered_df['Order_ID']]
-            display_df['العميل'] = filtered_df['Customer'].astype(str)
-            display_df['الهاتف'] = filtered_df['Phone'].astype(str)
-            display_df['المنطقة'] = filtered_df['Region'].astype(str)
-            display_df['الأكياس'] = filtered_df['Bags'].astype(str) + " أكياس"
-            display_df['قيمة المنتجات'] = filtered_df['Products_Total'].astype(str) + " ر.ع"
-            display_df['الشحن'] = filtered_df['Shipping_Price'].astype(str) + " ر.ع"
-            display_df['الإجمالي الكلي'] = filtered_df['Total'].astype(str) + " ر.ع"
-            display_df['شركة الشحن'] = filtered_df['Cargo_Company'].astype(str)
+            order_ids = get_col_values(filtered_df, ['Order_ID', 'رقم الطلب', 'order_id'])
+            display_df['رقم الطلب'] = [f"#{int(float(x))}" if str(x).replace('.','',1).isdigit() else f"#{x}" for x in order_ids]
+            
+            display_df['العميل'] = get_col_values(filtered_df, ['Customer', 'العميل', 'اسم العميل', 'customer'])
+            display_df['الهاتف'] = get_col_values(filtered_df, ['Phone', 'الهاتف', 'رقم الهاتف', 'phone'])
+            display_df['المنطقة'] = get_col_values(filtered_df, ['Region', 'المنطقة', 'المنطقة / الولاية', 'region'])
+            
+            bags_vals = get_col_values(filtered_df, ['Bags', 'الأكياس', 'عدد الأكياس', 'bags'])
+            display_df['الأكياس'] = bags_vals.astype(str) + " أكياس"
+            
+            prod_tot = get_col_values(filtered_df, ['Products_Total', 'قيمة المنتجات', 'products_total'])
+            display_df['قيمة المنتجات'] = prod_tot.astype(str) + " ر.ع"
+            
+            ship_p = get_col_values(filtered_df, ['Shipping_Price', 'الشحن', 'سعر الشحن', 'shipping_price'])
+            display_df['الشحن'] = ship_p.astype(str) + " ر.ع"
+            
+            tot_v = get_col_values(filtered_df, ['Total', 'الإجمالي الكلي', 'total'])
+            display_df['الإجمالي الكلي'] = tot_v.astype(str) + " ر.ع"
+            
+            display_df['شركة الشحن'] = get_col_values(filtered_df, ['Cargo_Company', 'شركة الشحن', 'cargo_company'])
             
             table_html = display_df.to_html(index=False, border=0, classes='styled-table')
             
