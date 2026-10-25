@@ -574,34 +574,35 @@ elif menu == "تقرير الشحن لشركة الشحن (تقرير الاست
         st.markdown("---")
         
         if not filtered_df.empty:
-            # دالة مساعدة آمنة للبحث عن الأعمدة واستخراج قيمها بشكل مضمون لمنع ظهور NaN
-            def get_col_values(df, possible_names):
+            # استخدام .values لاستخراج القيم وتجنب مشاكل تطابق الفهارس (Index Mismatch / NaN)
+            def get_col_values_arr(df, possible_names):
                 for name in possible_names:
                     if name in df.columns:
-                        return df[name].fillna("غير محدد").astype(str)
-                return pd.Series(["غير محدد"] * len(df))
+                        return df[name].fillna("غير محدد").values
+                return ["غير محدد"] * len(df)
 
-            display_df = pd.DataFrame()
-            order_ids = get_col_values(filtered_df, ['Order_ID', 'رقم الطلب', 'order_id'])
+            display_df = pd.DataFrame(index=range(len(filtered_df)))
+            
+            order_ids = get_col_values_arr(filtered_df, ['Order_ID', 'رقم الطلب', 'order_id'])
             display_df['رقم الطلب'] = [f"#{int(float(x))}" if str(x).replace('.','',1).isdigit() else f"#{x}" for x in order_ids]
             
-            display_df['العميل'] = get_col_values(filtered_df, ['Customer', 'العميل', 'اسم العميل', 'customer'])
-            display_df['الهاتف'] = get_col_values(filtered_df, ['Phone', 'الهاتف', 'رقم الهاتف', 'phone'])
-            display_df['المنطقة'] = get_col_values(filtered_df, ['Region', 'المنطقة', 'المنطقة / الولاية', 'region'])
+            display_df['العميل'] = get_col_values_arr(filtered_df, ['Customer', 'العميل', 'اسم العميل', 'customer'])
+            display_df['الهاتف'] = get_col_values_arr(filtered_df, ['Phone', 'الهاتف', 'رقم الهاتف', 'phone'])
+            display_df['المنطقة'] = get_col_values_arr(filtered_df, ['Region', 'المنطقة', 'المنطقة / الولاية', 'region'])
             
-            bags_vals = get_col_values(filtered_df, ['Bags', 'الأكياس', 'عدد الأكياس', 'bags'])
-            display_df['الأكياس'] = bags_vals.astype(str) + " أكياس"
+            bags_vals = get_col_values_arr(filtered_df, ['Bags', 'الأكياس', 'عدد الأكياس', 'bags'])
+            display_df['الأكياس'] = [f"{b} أكياس" for b in bags_vals]
             
-            prod_tot = get_col_values(filtered_df, ['Products_Total', 'قيمة المنتجات', 'products_total'])
-            display_df['قيمة المنتجات'] = prod_tot.astype(str) + " ر.ع"
+            prod_tot = get_col_values_arr(filtered_df, ['Products_Total', 'قيمة المنتجات', 'products_total'])
+            display_df['قيمة المنتجات'] = [f"{p} ر.ع" for p in prod_tot]
             
-            ship_p = get_col_values(filtered_df, ['Shipping_Price', 'الشحن', 'سعر الشحن', 'shipping_price'])
-            display_df['الشحن'] = ship_p.astype(str) + " ر.ع"
+            ship_p = get_col_values_arr(filtered_df, ['Shipping_Price', 'الشحن', 'سعر الشحن', 'shipping_price'])
+            display_df['الشحن'] = [f"{s} ر.ع" for s in ship_p]
             
-            tot_v = get_col_values(filtered_df, ['Total', 'الإجمالي الكلي', 'total'])
-            display_df['الإجمالي الكلي'] = tot_v.astype(str) + " ر.ع"
+            tot_v = get_col_values_arr(filtered_df, ['Total', 'الإجمالي الكلي', 'total'])
+            display_df['الإجمالي الكلي'] = [f"{t} ر.ع" for t in tot_v]
             
-            display_df['شركة الشحن'] = get_col_values(filtered_df, ['Cargo_Company', 'شركة الشحن', 'cargo_company'])
+            display_df['شركة الشحن'] = get_col_values_arr(filtered_df, ['Cargo_Company', 'شركة الشحن', 'cargo_company'])
             
             table_html = display_df.to_html(index=False, border=0, classes='styled-table')
             
