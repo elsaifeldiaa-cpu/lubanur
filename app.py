@@ -68,6 +68,53 @@ EXACT_ITEMS = [
     "لبانور عبق اللبان معطر 500 مل"
 ]
 
+def normalize_orders_df(orders):
+    if orders.empty:
+        return pd.DataFrame(columns=["Order_ID", "Date", "Customer", "Phone", "Region", "Items_Detail", "Products_Total", "Shipping_Price", "Total", "Order_Payment", "Shipping_Payment", "Cargo_Company", "Delivery_Type", "Delivery_Status", "Collection_Status", "Bags"])
+    
+    rename_map = {
+        'رقم الطلب': 'Order_ID', 'order_id': 'Order_ID',
+        'التاريخ': 'Date', 'date': 'Date',
+        'العميل': 'Customer', 'customer': 'Customer', 'اسم العميل': 'Customer',
+        'الهاتف': 'Phone', 'phone': 'Phone', 'رقم الهاتف': 'Phone',
+        'المنطقة': 'Region', 'region': 'Region', 'المنطقة / الولاية': 'Region',
+        'تفاصيل المنتجات': 'Items_Detail', 'items_detail': 'Items_Detail',
+        'قيمة المنتجات': 'Products_Total', 'products_total': 'Products_Total',
+        'الشحن': 'Shipping_Price', 'shipping_price': 'Shipping_Price', 'سعر الشحن': 'Shipping_Price',
+        'الإجمالي الكلي': 'Total', 'total': 'Total',
+        'حالة دفع الطلب': 'Order_Payment', 'order_payment': 'Order_Payment',
+        'حالة دفع الشحن': 'Shipping_Payment', 'shipping_payment': 'Shipping_Payment',
+        'شركة الشحن': 'Cargo_Company', 'cargo_company': 'Cargo_Company',
+        'نوع التسليم': 'Delivery_Type', 'delivery_type': 'Delivery_Type',
+        'حالة التوصيل': 'Delivery_Status', 'delivery_status': 'Delivery_Status',
+        'حالة التحصيل': 'Collection_Status', 'collection_status': 'Collection_Status',
+        'الأكياس': 'Bags', 'bags': 'Bags', 'عدد الأكياس': 'Bags'
+    }
+    orders = orders.rename(columns=rename_map)
+    orders.columns = [str(c).strip() for c in orders.columns]
+    
+    expected_defaults = {
+        "Order_ID": 0, "Date": "غير محدد", "Customer": "غير محدد", "Phone": "غير محدد", 
+        "Region": "غير محدد", "Items_Detail": "غير محدد", "Products_Total": 0.0, 
+        "Shipping_Price": 0.0, "Total": 0.0, "Order_Payment": "تم الدفع", 
+        "Shipping_Payment": "تم دفع الشحن", "Cargo_Company": "بدون شحن", 
+        "Delivery_Type": "غير محدد", "Delivery_Status": "قيد التحضير", 
+        "Collection_Status": "قيد التحصيل", "Bags": 1
+    }
+    
+    for col, default_val in expected_defaults.items():
+        if col not in orders.columns:
+            orders[col] = default_val
+        else:
+            if col in ["Customer", "Phone", "Region", "Cargo_Company", "Items_Detail", "Order_Payment", "Shipping_Payment", "Delivery_Type", "Delivery_Status", "Collection_Status", "Date"]:
+                orders[col] = orders[col].fillna(default_val).astype(str)
+                orders[col] = orders[col].replace(["nan", "None", ""], default_val)
+            elif col in ["Products_Total", "Shipping_Price", "Total", "Bags", "Order_ID"]:
+                orders[col] = pd.to_numeric(orders[col], errors='coerce').fillna(default_val)
+                if col in ["Bags", "Order_ID"]:
+                    orders[col] = orders[col].astype(int)
+    return orders
+
 def init_db():
     if not os.path.exists(DB_FILE):
         if os.path.exists(ORIGINAL_EXCEL):
@@ -90,20 +137,10 @@ def init_db():
     else:
         xls = pd.ExcelFile(DB_FILE)
         orders = pd.read_excel(xls, sheet_name="Orders")
+        orders = normalize_orders_df(orders)
+        
         stock = pd.read_excel(xls, sheet_name="Stock") if "Stock" in xls.sheet_names else pd.DataFrame(columns=["Item_Name", "Qty"])
         expenses = pd.read_excel(xls, sheet_name="Expenses") if "Expenses" in xls.sheet_names else pd.DataFrame(columns=["Expense_ID", "Date", "Category", "Amount", "Description"])
-        
-        expected_cols = {
-            "Order_ID": 0, "Date": "غير محدد", "Customer": "غير محدد", "Phone": "غير محدد", 
-            "Region": "غير محدد", "Items_Detail": "غير محدد", "Products_Total": 0.0, 
-            "Shipping_Price": 0.0, "Total": 0.0, "Order_Payment": "غير محدد", 
-            "Shipping_Payment": "غير محدد", "Cargo_Company": "بدون شحن", 
-            "Delivery_Type": "غير محدد", "Delivery_Status": "قيد التحضير", 
-            "Collection_Status": "قيد التحصيل", "Bags": 1
-        }
-        for col, default_val in expected_cols.items():
-            if col not in orders.columns:
-                orders[col] = default_val
 
         with pd.ExcelWriter(DB_FILE, engine='openpyxl') as writer:
             orders.to_excel(writer, sheet_name="Orders", index=False)
@@ -115,20 +152,10 @@ init_db()
 def load_data():
     xls = pd.ExcelFile(DB_FILE)
     orders = pd.read_excel(xls, sheet_name="Orders")
+    orders = normalize_orders_df(orders)
+    
     stock = pd.read_excel(xls, sheet_name="Stock")
     expenses = pd.read_excel(xls, sheet_name="Expenses") if "Expenses" in xls.sheet_names else pd.DataFrame(columns=["Expense_ID", "Date", "Category", "Amount", "Description"])
-    
-    # تنظيف وتصحيح القيم الفارغة أو None لمنع ظهور None في الجداول
-    if not orders.empty:
-        for col in ["Customer", "Phone", "Region", "Cargo_Company", "Items_Detail", "Order_Payment", "Shipping_Payment", "Delivery_Type", "Delivery_Status", "Collection_Status", "Date"]:
-            if col in orders.columns:
-                orders[col] = orders[col].fillna("غير محدد").astype(str)
-                orders[col] = orders[col].replace(["nan", "None", ""], "غير محدد")
-                
-        for col in ["Products_Total", "Shipping_Price", "Total", "Bags"]:
-            if col in orders.columns:
-                orders[col] = pd.to_numeric(orders[col], errors='coerce').fillna(0)
-                
     return orders, stock, expenses
 
 orders_df, stock_df, expenses_df = load_data()
@@ -377,7 +404,7 @@ elif menu == "التقرير المالي التفصيلي (Financial Report)":
     total_sales = orders_df['Total'].sum() if not orders_df.empty else 0.0
     total_products_value = orders_df['Products_Total'].sum() if not orders_df.empty else 0.0
     total_shipping = orders_df['Shipping_Price'].sum() if not orders_df.empty else 0.0
-    total_expenses = expenses_df['Amount'].sum() if not orders_df.empty else 0.0
+    total_expenses = expenses_df['Amount'].sum() if not expenses_df.empty else 0.0
     net_treasury = total_products_value - total_expenses
 
     m1, m2, m3, m4 = st.columns(4)
@@ -555,7 +582,6 @@ elif menu == "تقرير الشحن لشركة الشحن (تقرير الاست
             display_df['الإجمالي الكلي'] = filtered_df['Total'].astype(str) + " ر.ع"
             display_df['شركة الشحن'] = filtered_df['Cargo_Company'].astype(str)
             
-            # إنشاء جدول HTML منسق بالكامل لعرضه وطباعته وتصديره بدقة
             table_html = display_df.to_html(index=False, border=0, classes='styled-table')
             
             report_html = f"""
@@ -596,7 +622,6 @@ elif menu == "تقرير الشحن لشركة الشحن (تقرير الاست
             st.markdown(report_html, unsafe_allow_html=True)
             st.write("")
             
-            # أزرار الطباعة، التحميل كصورة، وتصدير Excel
             action_buttons_html = f"""
             <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
             <div style="display: flex; gap: 15px; justify-content: center; margin-top: 20px; flex-wrap: wrap;">
