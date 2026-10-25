@@ -236,7 +236,6 @@ if os.path.exists(DB_FILE):
         help="انقر لتحميل نسخة كاملة ومحدثة من قاعدة البيانات على جهازك أو الأيباد"
     )
 
-# أداة رفع واسترجاع النسخة الاحتياطة في حال انطفاء الخادم
 uploaded_backup = st.sidebar.file_uploader("📤 استرجاع بيانات من نسخة احتياطية (.xlsx)", type=["xlsx"])
 if uploaded_backup is not None:
     try:
@@ -482,26 +481,63 @@ elif menu == "فاتورة العميل (Compact Receipt)":
         order_row = orders_df[orders_df['Order_ID'] == selected_order_id].iloc[0]
         
         raw_items = str(order_row['Items_Detail'])
-        formatted_items_text = raw_items.replace(" | ", "\n- ")
+        formatted_items_text = raw_items.replace(" | ", "<br>- ")
         if formatted_items_text and not formatted_items_text.startswith("-"):
             formatted_items_text = "- " + formatted_items_text
 
-        receipt_text = f"""=== لبانور - LubaNur ===
-رقم الفاتورة: #{order_row['Order_ID']} | التاريخ: {order_row['Date']}
-العميل: {order_row['Customer']} | الهاتف: {order_row['Phone']}
-المنطقة: {order_row['Region']}
------------------------------------
-المنتجات:
-{formatted_items_text}
------------------------------------
-قيمة المنتجات: {order_row['Products_Total']} ر.ع
-سعر الشحن: {order_row['Shipping_Price']} ر.ع
-الإجمالي الكلي: {order_row['Total']} ر.ع
-حالة دفع الطلب: {order_row.get('Order_Payment', 'غير محدد')}
-حالة دفع الشحن: {order_row.get('Shipping_Payment', 'غير محدد')}
-شكراً لتعاملكم معنا!"""
+        # تصميم HTML احترافي وقابل للطباعة والتحميل كصورة لفاتورة العميل
+        receipt_html = f"""
+        <div id="printable-receipt" style="max-width: 400px; margin: auto; border: 2px dashed #2c3e50; border-radius: 12px; padding: 20px; background-color: #ffffff; direction: rtl; text-align: right; font-family: Tahoma, sans-serif; box-shadow: 0 4px 10px rgba(0,0,0,0.05);">
+            <h3 style="text-align: center; color: #2c3e50; margin-bottom: 5px;">=== لبانور - LubaNur ===</h3>
+            <p style="text-align: center; color: #666; font-size: 12px; margin-top: 0px; border-bottom: 1px dashed #ddd; padding-bottom: 10px;">السيف والضياء للاستثمار الدولي</p>
+            <div style="font-size: 14px; color: #333; line-height: 1.6;">
+                <p><b>رقم الفاتورة:</b> #{order_row['Order_ID']} &nbsp;|&nbsp; <b>التاريخ:</b> {order_row['Date']}</p>
+                <p><b>العميل:</b> {order_row['Customer']} &nbsp;|&nbsp; <b>الهاتف:</b> {order_row['Phone']}</p>
+                <p><b>المنطقة:</b> {order_row['Region']}</p>
+            </div>
+            <hr style="border: 0.5px dashed #ccc;">
+            <div style="font-size: 13px; color: #333;">
+                <p style="font-weight: bold; margin-bottom: 5px;">المنتجات:</p>
+                <div style="padding-right: 5px; line-height: 1.6; color: #444;">{formatted_items_text}</div>
+            </div>
+            <hr style="border: 0.5px dashed #ccc;">
+            <div style="font-size: 14px; color: #333; line-height: 1.8;">
+                <p><b>قيمة المنتجات:</b> {order_row['Products_Total']} ر.ع</p>
+                <p><b>سعر الشحن:</b> {order_row['Shipping_Price']} ر.ع</p>
+                <p style="font-size: 16px; color: #007bff; font-weight: bold;">الإجمالي الكلي: {order_row['Total']} ر.ع</p>
+                <p><b>حالة دفع الطلب:</b> {order_row.get('Order_Payment', 'غير محدد')}</p>
+                <p><b>حالة دفع الشحن:</b> {order_row.get('Shipping_Payment', 'غير محدد')}</p>
+            </div>
+            <p style="text-align: center; font-weight: bold; color: #2c3e50; margin-top: 15px; border-top: 1px dashed #ddd; padding-top: 10px;">شكراً لتعاملكم معنا!</p>
+        </div>
+        """
+        st.markdown(receipt_html, unsafe_allow_html=True)
+        st.write("")
 
-        st.code(receipt_text)
+        # أزرار الطباعة والتحميل كصورة (PNG) لفاتورة العميل
+        receipt_buttons_html = f"""
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+        <div style="display: flex; gap: 15px; justify-content: center; margin-top: 20px; flex-wrap: wrap;">
+            <button onclick="window.print()" style="background-color: #28a745; color: white; padding: 12px 24px; border: none; border-radius: 6px; cursor: pointer; font-size: 15px; font-weight: bold; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+                🖨️ طباعة أو حفظ كـ PDF
+            </button>
+            <button onclick="downloadReceiptImage()" style="background-color: #007bff; color: white; padding: 12px 24px; border: none; border-radius: 6px; cursor: pointer; font-size: 15px; font-weight: bold; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+                📷 تحميل الفاتورة كصورة (PNG)
+            </button>
+        </div>
+        <script>
+            function downloadReceiptImage() {{
+                const receiptElement = document.getElementById('printable-receipt');
+                html2canvas(receiptElement, {{ scale: 2, useCORS: true }}).then(canvas => {{
+                    const link = document.createElement('a');
+                    link.download = 'LubaNur_Invoice_#{order_row["Order_ID"]}.png';
+                    link.href = canvas.toDataURL('image/png');
+                    link.click();
+                }});
+            }}
+        </script>
+        """
+        st.components.v1.html(receipt_buttons_html, height=70)
 
 elif menu == "تعديل وحذف الفواتير (Edit & Delete)":
     st.header("✏️ تعديل وحذف الفواتير")
