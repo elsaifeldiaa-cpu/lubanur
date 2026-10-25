@@ -220,9 +220,10 @@ menu_options = {
 selected_label = st.sidebar.selectbox("🧭 الانتقال السريع بين الأقسام", list(menu_options.keys()))
 menu = menu_options[selected_label]
 
-# === 💾 زر النسخ الاحتياطي وتسجيل الخروج في القائمة الجانبية ===
+# === 💾 إدارة النسخ الاحتياطي واسترجاع البيانات في القائمة الجانبية ===
 st.sidebar.markdown("---")
-st.sidebar.subheader("💾 النسخ الاحتياطي والأمان")
+st.sidebar.subheader("💾 النسخ الاحتياطي واسترجاع البيانات")
+
 if os.path.exists(DB_FILE):
     with open(DB_FILE, "rb") as f:
         excel_bytes = f.read()
@@ -232,8 +233,19 @@ if os.path.exists(DB_FILE):
         data=excel_bytes,
         file_name=f"LubaNur_Backup_{current_date_str}.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        help="انقر لتحميل نسخة كاملة من قاعدة البيانات المحدثة على جهازك أو الأيباد"
+        help="انقر لتحميل نسخة كاملة ومحدثة من قاعدة البيانات على جهازك أو الأيباد"
     )
+
+# أداة رفع واسترجاع النسخة الاحتياطة في حال انطفاء الخادم
+uploaded_backup = st.sidebar.file_uploader("📤 استرجاع بيانات من نسخة احتياطية (.xlsx)", type=["xlsx"])
+if uploaded_backup is not None:
+    try:
+        with open(DB_FILE, "wb") as f:
+            f.write(uploaded_backup.getbuffer())
+        st.sidebar.success("✅ تم استرجاع البيانات بنجاح! جاري التحديث...")
+        st.rerun()
+    except Exception as e:
+        st.sidebar.error(f"خطأ في استرجاع الملف: {e}")
 
 if st.sidebar.button("🔒 تسجيل الخروج (Logout)"):
     st.session_state.authenticated = False
@@ -469,7 +481,6 @@ elif menu == "فاتورة العميل (Compact Receipt)":
         selected_order_id = st.selectbox("اختر رقم الطلب", orders_df['Order_ID'].tolist())
         order_row = orders_df[orders_df['Order_ID'] == selected_order_id].iloc[0]
         
-        # تنسيق الأصناف لتظهر في أسطر مستقلة عند النسخ والعرض
         raw_items = str(order_row['Items_Detail'])
         formatted_items_text = raw_items.replace(" | ", "\n- ")
         if formatted_items_text and not formatted_items_text.startswith("-"):
