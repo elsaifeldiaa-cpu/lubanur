@@ -118,16 +118,17 @@ def load_data():
     stock = pd.read_excel(xls, sheet_name="Stock")
     expenses = pd.read_excel(xls, sheet_name="Expenses") if "Expenses" in xls.sheet_names else pd.DataFrame(columns=["Expense_ID", "Date", "Category", "Amount", "Description"])
     
-    # تنظيف وتأكيد وجود الأعمدة لتجنب ظهور None
+    # تنظيف وتصحيح القيم الفارغة أو None لمنع ظهور None في الجداول
     if not orders.empty:
-        for col in ["Customer", "Phone", "Region", "Cargo_Company", "Items_Detail"]:
+        for col in ["Customer", "Phone", "Region", "Cargo_Company", "Items_Detail", "Order_Payment", "Shipping_Payment", "Delivery_Type", "Delivery_Status", "Collection_Status", "Date"]:
             if col in orders.columns:
                 orders[col] = orders[col].fillna("غير محدد").astype(str)
-        if "Bags" in orders.columns:
-            orders["Bags"] = pd.to_numeric(orders["Bags"], errors='coerce').fillna(1).astype(int)
-        else:
-            orders["Bags"] = 1
-            
+                orders[col] = orders[col].replace(["nan", "None", ""], "غير محدد")
+                
+        for col in ["Products_Total", "Shipping_Price", "Total", "Bags"]:
+            if col in orders.columns:
+                orders[col] = pd.to_numeric(orders[col], errors='coerce').fillna(0)
+                
     return orders, stock, expenses
 
 orders_df, stock_df, expenses_df = load_data()
@@ -376,7 +377,7 @@ elif menu == "التقرير المالي التفصيلي (Financial Report)":
     total_sales = orders_df['Total'].sum() if not orders_df.empty else 0.0
     total_products_value = orders_df['Products_Total'].sum() if not orders_df.empty else 0.0
     total_shipping = orders_df['Shipping_Price'].sum() if not orders_df.empty else 0.0
-    total_expenses = expenses_df['Amount'].sum() if not expenses_df.empty else 0.0
+    total_expenses = expenses_df['Amount'].sum() if not orders_df.empty else 0.0
     net_treasury = total_products_value - total_expenses
 
     m1, m2, m3, m4 = st.columns(4)
@@ -422,6 +423,8 @@ elif menu == "تعديل وحذف الفواتير (Edit & Delete)":
         with st.form("edit_form"):
             e_cust = st.text_input("اسم العميل", value=str(target_row['Customer']))
             e_phone = st.text_input("الهاتف", value=str(target_row['Phone']))
+            e_region = st.text_input("المنطقة / الولاية", value=str(target_row.get('Region', '')))
+            e_bags = st.number_input("عدد الأكياس", min_value=0, value=int(target_row.get('Bags', 1)))
             e_prod_tot = st.number_input("قيمة المنتجات", value=float(target_row['Products_Total']))
             e_ship_p = st.number_input("سعر الشحن", value=float(target_row['Shipping_Price']))
             
@@ -434,6 +437,8 @@ elif menu == "تعديل وحذف الفواتير (Edit & Delete)":
             if st.form_submit_button("💾 حفظ التعديلات"):
                 orders_df.loc[orders_df['Order_ID'] == edit_order_id, 'Customer'] = e_cust
                 orders_df.loc[orders_df['Order_ID'] == edit_order_id, 'Phone'] = e_phone
+                orders_df.loc[orders_df['Order_ID'] == edit_order_id, 'Region'] = e_region
+                orders_df.loc[orders_df['Order_ID'] == edit_order_id, 'Bags'] = e_bags
                 orders_df.loc[orders_df['Order_ID'] == edit_order_id, 'Products_Total'] = e_prod_tot
                 orders_df.loc[orders_df['Order_ID'] == edit_order_id, 'Shipping_Price'] = e_ship_p
                 orders_df.loc[orders_df['Order_ID'] == edit_order_id, 'Total'] = e_prod_tot + e_ship_p
@@ -550,40 +555,85 @@ elif menu == "تقرير الشحن لشركة الشحن (تقرير الاست
             display_df['الإجمالي الكلي'] = filtered_df['Total'].astype(str) + " ر.ع"
             display_df['شركة الشحن'] = filtered_df['Cargo_Company'].astype(str)
             
+            # إنشاء جدول HTML منسق بالكامل لعرضه وطباعته وتصديره بدقة
+            table_html = display_df.to_html(index=False, border=0, classes='styled-table')
+            
             report_html = f"""
-            <div style="border: 2px solid #2c3e50; border-radius: 10px; padding: 20px; background-color: #ffffff; direction: rtl; text-align: right; font-family: Tahoma, sans-serif;">
+            <div id="printable-report" style="border: 2px solid #2c3e50; border-radius: 10px; padding: 20px; background-color: #ffffff; direction: rtl; text-align: right; font-family: Tahoma, sans-serif;">
                 <h3 style="text-align: center; color: #2c3e50; margin-bottom: 5px;">السيف والضياء للاستثمار الدولي - لبانور</h3>
                 <h4 style="text-align: center; color: #555555; margin-top: 0px; margin-bottom: 15px;">تقرير تسليم شحنات شركة: {selected_cargo}</h4>
                 <p style="text-align: center; font-weight: bold; color: #333333; border-bottom: 1px solid #ddd; padding-bottom: 10px;">
                     تاريخ الشحن: {rep_date} &nbsp;|&nbsp; إجمالي الطلبات: {total_orders} &nbsp;|&nbsp; إجمالي الأكياس: {total_bags}
                 </p>
+                <div style="overflow-x: auto; margin-top: 15px;">
+                    <style>
+                        .styled-table {{
+                            width: 100%;
+                            border-collapse: collapse;
+                            margin: 10px 0;
+                            font-size: 13px;
+                            font-family: Tahoma, sans-serif;
+                            text-align: right;
+                        }}
+                        .styled-table th, .styled-table td {{
+                            padding: 10px 12px;
+                            border: 1px solid #dddddd;
+                            text-align: right;
+                        }}
+                        .styled-table th {{
+                            background-color: #2c3e50;
+                            color: #ffffff;
+                            font-weight: bold;
+                        }}
+                        .styled-table tbody tr:nth-of-type(even) {{
+                            background-color: #f9f9f9;
+                        }}
+                    </style>
+                    {table_html}
+                </div>
             </div>
             """
             st.markdown(report_html, unsafe_allow_html=True)
             st.write("")
-            st.dataframe(display_df, use_container_width=True)
             
-            col_b1, col_b2 = st.columns(2)
-            with col_b1:
-                if st.button("🖨️ طباعة التقرير", key="print_rep_btn"):
-                    st.components.v1.html("""
-                        <script>
-                            window.print();
-                        </script>
-                    """, height=0)
-            with col_b2:
-                excel_output = BytesIO()
-                with pd.ExcelWriter(excel_output, engine='openpyxl') as writer:
-                    filtered_df.to_excel(writer, sheet_name="Cargo_Report", index=False)
-                excel_data = excel_output.getvalue()
-                
-                st.download_button(
-                    label="📥 تحميل تقرير الشحن (Excel)",
-                    data=excel_data,
-                    file_name=f"Report_{selected_cargo}_{rep_date}.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    key="download_cargo_excel"
-                )
+            # أزرار الطباعة، التحميل كصورة، وتصدير Excel
+            action_buttons_html = f"""
+            <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+            <div style="display: flex; gap: 15px; justify-content: center; margin-top: 20px; flex-wrap: wrap;">
+                <button onclick="window.print()" style="background-color: #28a745; color: white; padding: 12px 24px; border: none; border-radius: 6px; cursor: pointer; font-size: 15px; font-weight: bold; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+                    🖨️ طباعة أو حفظ كـ PDF
+                </button>
+                <button onclick="downloadReportImage()" style="background-color: #007bff; color: white; padding: 12px 24px; border: none; border-radius: 6px; cursor: pointer; font-size: 15px; font-weight: bold; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+                    📷 تحميل التقرير كصورة (PNG)
+                </button>
+            </div>
+            <script>
+                function downloadReportImage() {{
+                    const reportElement = document.getElementById('printable-report');
+                    html2canvas(reportElement, {{ scale: 2, useCORS: true }}).then(canvas => {{
+                        const link = document.createElement('a');
+                        link.download = 'Report_{selected_cargo}_{rep_date}.png';
+                        link.href = canvas.toDataURL('image/png');
+                        link.click();
+                    }});
+                }}
+            </script>
+            """
+            st.components.v1.html(action_buttons_html, height=70)
+            
+            st.markdown("---")
+            excel_output = BytesIO()
+            with pd.ExcelWriter(excel_output, engine='openpyxl') as writer:
+                filtered_df.to_excel(writer, sheet_name="Cargo_Report", index=False)
+            excel_data = excel_output.getvalue()
+            
+            st.download_button(
+                label="📥 تحميل تقرير الشحن بصيغة Excel",
+                data=excel_data,
+                file_name=f"Report_{selected_cargo}_{rep_date}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                key="download_cargo_excel"
+            )
         else:
             st.info(f"لا توجد طلبيات مسجلة لشركة الشحن ({selected_cargo}) في تاريخ ({rep_date}).")
     else:
@@ -593,7 +643,7 @@ elif menu == "متابعة التحصيل المالي":
     st.header("💵 متابعة التحصيل المالي وحالات الدفع والشحن")
     orders_df, stock_df, expenses_df = load_data()
     if not orders_df.empty:
-        display_cols = ['Order_ID', 'Date', 'Customer', 'Phone', 'Cargo_Company', 'Products_Total', 'Shipping_Price', 'Order_Payment', 'Shipping_Payment', 'Collection_Status']
+        display_cols = ['Order_ID', 'Date', 'Customer', 'Phone', 'Region', 'Bags', 'Cargo_Company', 'Products_Total', 'Shipping_Price', 'Order_Payment', 'Shipping_Payment', 'Collection_Status']
         existing_cols = [c for c in display_cols if c in orders_df.columns]
         st.dataframe(orders_df[existing_cols], use_container_width=True)
         
