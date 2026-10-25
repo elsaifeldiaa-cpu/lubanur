@@ -72,23 +72,26 @@ def normalize_orders_df(orders):
     if orders.empty:
         return pd.DataFrame(columns=["Order_ID", "Date", "Customer", "Phone", "Region", "Items_Detail", "Products_Total", "Shipping_Price", "Total", "Order_Payment", "Shipping_Payment", "Cargo_Company", "Delivery_Type", "Delivery_Status", "Collection_Status", "Bags"])
     
+    # تنظيف أسماء الأعمدة من المسافات الزائدة أولاً
+    orders.columns = [str(c).strip() for c in orders.columns]
+    
     rename_map = {
-        'رقم الطلب': 'Order_ID', 'order_id': 'Order_ID',
-        'التاريخ': 'Date', 'date': 'Date',
-        'العميل': 'Customer', 'customer': 'Customer', 'اسم العميل': 'Customer',
-        'الهاتف': 'Phone', 'phone': 'Phone', 'رقم الهاتف': 'Phone',
-        'المنطقة': 'Region', 'region': 'Region', 'المنطقة / الولاية': 'Region',
-        'تفاصيل المنتجات': 'Items_Detail', 'items_detail': 'Items_Detail',
-        'قيمة المنتجات': 'Products_Total', 'products_total': 'Products_Total',
-        'الشحن': 'Shipping_Price', 'shipping_price': 'Shipping_Price', 'سعر الشحن': 'Shipping_Price',
-        'الإجمالي الكلي': 'Total', 'total': 'Total',
-        'حالة دفع الطلب': 'Order_Payment', 'order_payment': 'Order_Payment',
-        'حالة دفع الشحن': 'Shipping_Payment', 'shipping_payment': 'Shipping_Payment',
-        'شركة الشحن': 'Cargo_Company', 'cargo_company': 'Cargo_Company',
-        'نوع التسليم': 'Delivery_Type', 'delivery_type': 'Delivery_Type',
-        'حالة التوصيل': 'Delivery_Status', 'delivery_status': 'Delivery_Status',
-        'حالة التحصيل': 'Collection_Status', 'collection_status': 'Collection_Status',
-        'الأكياس': 'Bags', 'bags': 'Bags', 'عدد الأكياس': 'Bags'
+        'رقم الطلب': 'Order_ID', 'order_id': 'Order_ID', 'Order_ID': 'Order_ID',
+        'التاريخ': 'Date', 'date': 'Date', 'Date': 'Date',
+        'العميل': 'Customer', 'customer': 'Customer', 'Customer': 'Customer', 'اسم العميل': 'Customer',
+        'الهاتف': 'Phone', 'phone': 'Phone', 'Phone': 'Phone', 'رقم الهاتف': 'Phone',
+        'المنطقة': 'Region', 'region': 'Region', 'Region': 'Region', 'المنطقة / الولاية': 'Region',
+        'تفاصيل المنتجات': 'Items_Detail', 'items_detail': 'Items_Detail', 'Items_Detail': 'Items_Detail',
+        'قيمة المنتجات': 'Products_Total', 'products_total': 'Products_Total', 'Products_Total': 'Products_Total', 'Products_': 'Products_Total',
+        'الشحن': 'Shipping_Price', 'shipping_price': 'Shipping_Price', 'Shipping_Price': 'Shipping_Price', 'سعر الشحن': 'Shipping_Price', 'Shipping_': 'Shipping_Price',
+        'الإجمالي الكلي': 'Total', 'total': 'Total', 'Total': 'Total',
+        'حالة دفع الطلب': 'Order_Payment', 'order_payment': 'Order_Payment', 'Order_Payment': 'Order_Payment',
+        'حالة دفع الشحن': 'Shipping_Payment', 'shipping_payment': 'Shipping_Payment', 'Shipping_Payment': 'Shipping_Payment',
+        'شركة الشحن': 'Cargo_Company', 'cargo_company': 'Cargo_Company', 'Cargo_Company': 'Cargo_Company', 'Cargo_Cor': 'Cargo_Company',
+        'نوع التسليم': 'Delivery_Type', 'delivery_type': 'Delivery_Type', 'Delivery_Type': 'Delivery_Type',
+        'حالة التوصيل': 'Delivery_Status', 'delivery_status': 'Delivery_Status', 'Delivery_Status': 'Delivery_Status',
+        'حالة التحصيل': 'Collection_Status', 'collection_status': 'Collection_Status', 'Collection_Status': 'Collection_Status',
+        'الأكياس': 'Bags', 'bags': 'Bags', 'Bags': 'Bags', 'عدد الأكياس': 'Bags'
     }
     orders = orders.rename(columns=rename_map)
     orders.columns = [str(c).strip() for c in orders.columns]
@@ -404,7 +407,7 @@ elif menu == "التقرير المالي التفصيلي (Financial Report)":
     total_sales = orders_df['Total'].sum() if not orders_df.empty else 0.0
     total_products_value = orders_df['Products_Total'].sum() if not orders_df.empty else 0.0
     total_shipping = orders_df['Shipping_Price'].sum() if not orders_df.empty else 0.0
-    total_expenses = expenses_df['Amount'].sum() if not expenses_df.empty else 0.0
+    total_expenses = expenses_df['Amount'].sum() if not orders_df.empty else 0.0
     net_treasury = total_products_value - total_expenses
 
     m1, m2, m3, m4 = st.columns(4)
@@ -559,7 +562,9 @@ elif menu == "تقرير الشحن لشركة الشحن (تقرير الاست
             unique_cargo = orders_df['Cargo_Company'].unique().tolist() if 'Cargo_Company' in orders_df.columns else ["بدون شحن"]
             selected_cargo = st.selectbox("اختر شركة الشحن للتقرير المنفصل", unique_cargo, key="cargo_rep_select")
             
-        filtered_df = orders_df[(orders_df['Cargo_Company'] == selected_cargo) & (orders_df['Date'] == str(rep_date))].copy()
+        # مقارنة مرنة للتواريخ (تتجاهل الفروقات بين النص والتاريخ أو الوقت)
+        orders_df['Date_Only'] = pd.to_datetime(orders_df['Date'], errors='coerce').dt.date
+        filtered_df = orders_df[(orders_df['Cargo_Company'] == selected_cargo) & (orders_df['Date_Only'] == rep_date)].copy()
         
         total_orders = len(filtered_df)
         total_bags = int(filtered_df['Bags'].sum()) if 'Bags' in filtered_df.columns and not filtered_df.empty else 0
@@ -649,7 +654,7 @@ elif menu == "تقرير الشحن لشركة الشحن (تقرير الاست
             st.markdown("---")
             excel_output = BytesIO()
             with pd.ExcelWriter(excel_output, engine='openpyxl') as writer:
-                filtered_df.to_excel(writer, sheet_name="Cargo_Report", index=False)
+                filtered_df.drop(columns=['Date_Only'], errors='ignore').to_excel(writer, sheet_name="Cargo_Report", index=False)
             excel_data = excel_output.getvalue()
             
             st.download_button(
