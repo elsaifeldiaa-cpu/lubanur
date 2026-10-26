@@ -229,6 +229,10 @@ menu_options = {
 selected_label = st.sidebar.selectbox("🧭 الانتقال السريع بين الأقسام", list(menu_options.keys()))
 menu = menu_options[selected_label]
 
+# === زر الرجوع (Back Button) في القائمة الجانبية أو في الأعلى ===
+if st.sidebar.button("⬅️ رجوع للوحة الرئيسية"):
+    st.rerun()
+
 # === 💾 إدارة النسخ الاحتياطي واسترجاع البيانات في القائمة الجانبية ===
 st.sidebar.markdown("---")
 st.sidebar.subheader("💾 النسخ الاحتياطي واسترجاع البيانات")
@@ -299,7 +303,6 @@ if menu == "اللوحة الرئيسية (Dashboard & Financials)":
             
     orders_df, stock_df, expenses_df = load_data()
     
-    # === التصحيح المالي: إيرادات المنتجات فقط هي إيراداتنا، وشحن شركات الشحن لا يدخل في إيراداتنا الصافية ===
     total_products_sales = orders_df['Products_Total'].sum() if not orders_df.empty and 'Products_Total' in orders_df.columns else 0.0
     total_shipping = orders_df['Shipping_Price'].sum() if not orders_df.empty and 'Shipping_Price' in orders_df.columns else 0.0
     total_expenses = expenses_df['Amount'].sum() if not expenses_df.empty and 'Amount' in expenses_df.columns else 0.0
@@ -453,24 +456,38 @@ elif menu == "الطلبات التي لم يتم تحضيرها (Pending Prepar
 elif menu == "🔍 تتبع الطلبات الشامل":
     st.header("🔍 نظام تتبع الطلبات الشامل")
     orders_df, _, _ = load_data()
+    
     if not orders_df.empty:
-        search_query = st.text_input("ابحث برقم الهاتف، رقم الطلب، أو باركود شركة الشحن:")
-        if search_query:
+        st.markdown("### 🎯 اختر نوع البحث المطلوب:")
+        search_type = st.selectbox(
+            "البحث بواسطة:",
+            ["عرض كافة الطلبات", "رقم الطلب (Order ID)", "رقم هاتف العميل (Phone)", "باركود شركة الشحن (Cargo Barcode)"]
+        )
+        
+        search_query = st.text_input("أدخل نص أو رقم البحث:")
+        
+        filtered_results = orders_df.copy()
+        
+        if search_type == "رقم الطلب (Order ID)" and search_query:
+            filtered_results = orders_df[orders_df['Order_ID'].astype(str).str.contains(search_query.strip(), na=False)]
+        elif search_type == "رقم هاتف العميل (Phone)" and search_query:
+            filtered_results = orders_df[orders_df['Phone'].astype(str).str.contains(search_query.strip(), na=False)]
+        elif search_type == "باركود شركة الشحن (Cargo Barcode)" and search_query:
+            filtered_results = orders_df[orders_df['Cargo_Barcode'].astype(str).str.contains(search_query.strip(), na=False)]
+        elif search_type != "عرض كافة الطلبات" and search_query:
+            # البحث الشامل في حالة عدم التحديد الدقيق
             q = search_query.strip()
-            # البحث في رقم الطلب أو الهاتف أو باركود الشحن
-            matched_df = orders_df[
+            filtered_results = orders_df[
                 orders_df['Phone'].astype(str).str.contains(q, na=False) |
                 orders_df['Order_ID'].astype(str).str.contains(q, na=False) |
                 orders_df['Cargo_Barcode'].astype(str).str.contains(q, na=False) |
                 orders_df['Customer'].astype(str).str.contains(q, na=False)
             ]
-            if not matched_df.empty:
-                st.success(f"تم العثور على {lenند} طلب مطابق:")
-                st.dataframe(matched_df[['Order_ID', 'Date', 'Customer', 'Phone', 'Region', 'Cargo_Company', 'Cargo_Barcode', 'Delivery_Status', 'Collection_Status', 'Total']], use_container_width=True)
-            else:
-                st.warning("⚠️ لم يتم العثور على أي طلب مطبق لهذا البحث.")
-        else:
-            st.info("الرجاء إدخال رقم هاتف العميل، رقم الكود، أو باركود شركة الشحن في خانة البحث أعلاه.")
+            
+        st.markdown(f"**النتائج المطابقة ({len(filtered_results)} طلب):**")
+        st.dataframe(filtered_results[['Order_ID', 'Date', 'Customer', 'Phone', 'Region', 'Cargo_Company', 'Cargo_Barcode', 'Delivery_Status', 'Collection_Status', 'Total']], use_container_width=True)
+    else:
+        st.info("لا توجد طلبيات مسجلة في النظام بعد.")
 
 elif menu == "إدارة المصروفات (Expenses)":
     st.header("💸 إدارة المصروفات")
@@ -496,10 +513,9 @@ elif menu == "إدارة المصروفات (Expenses)":
 elif menu == "التقرير المالي التفصيلي (Financial Report)":
     st.header("📈 التقرير المالي التفصيلي والشامل")
     orders_df, stock_df, expenses_df = load_data()
-    total_sales = orders_df['Total'].sum() if not orders_df.empty else 0.0
     total_products_value = orders_df['Products_Total'].sum() if not orders_df.empty else 0.0
     total_shipping = orders_df['Shipping_Price'].sum() if not orders_df.empty else 0.0
-    total_expenses = expenses_df['Amount'].sum() if not expenses_df.empty else 0.0
+    total_expenses = expenses_df['Amount'].sum() if not orders_df.empty else 0.0
     net_treasury = total_products_value - total_expenses
 
     m1, m2, m3, m4 = st.columns(4)
@@ -533,6 +549,7 @@ elif menu == "فاتورة العميل (Compact Receipt)":
         <head>
             <meta charset="utf-8">
             <title>فاتورة #{order_row['Order_ID']} - لبانور</title>
+            <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
             <style>
                 body {{ font-family: Tahoma, sans-serif; padding: 20px; direction: rtl; background-color: #f4f6f9; }}
                 .receipt-box {{ max-width: 420px; margin: 0 auto; border: 2px dashed #2c3e50; border-radius: 12px; padding: 20px; background-color: #ffffff; box-shadow: 0 4px 10px rgba(0,0,0,0.08); }}
@@ -541,14 +558,15 @@ elif menu == "فاتورة العميل (Compact Receipt)":
                 .info {{ font-size: 14px; color: #333; line-height: 1.6; }}
                 .items {{ font-size: 13px; color: #333; background: #f9f9f9; padding: 10px; border-radius: 6px; line-height: 1.6; margin: 10px 0; }}
                 .total {{ font-size: 16px; color: #007bff; font-weight: bold; text-align: center; margin-top: 10px; }}
-                .btn-container {{ display: flex; gap: 10px; justify-content: center; margin-top: 15px; }}
+                .btn-container {{ display: flex; gap: 10px; justify-content: center; margin-top: 15px; flex-wrap: wrap; }}
                 .btn {{ padding: 10px 18px; border: none; border-radius: 6px; font-weight: bold; cursor: pointer; text-decoration: none; font-size: 14px; }}
                 .btn-print {{ background-color: #28a745; color: white; }}
+                .btn-img {{ background-color: #007bff; color: white; }}
                 @media print {{ .no-print {{ display: none !important; }} body {{ background-color: white; }} .receipt-box {{ border: 1px solid #000; box-shadow: none; }} }}
             </style>
         </head>
         <body>
-            <div class="receipt-box">
+            <div id="receipt-capture" class="receipt-box">
                 <h3>=== لبانور - LubaNur ===</h3>
                 <div class="tagline">السيف والضياء للاستثمار الدولي</div>
                 <div class="info">
@@ -567,17 +585,30 @@ elif menu == "فاتورة العميل (Compact Receipt)":
                     <div class="total">الإجمالي الكلي: {order_row['Total']} ر.ع</div>
                 </div>
                 <p style="text-align: center; font-weight: bold; color: #2c3e50; margin-top: 15px; border-top: 1px dashed #ddd; padding-top: 10px;">شكراً لتعاملكم معنا!</p>
-                
-                <div class="btn-container no-print">
-                    <button class="btn btn-print" onclick="window.print()">🖨️ طباعة الفاتورة / حفظ كـ PDF</button>
-                </div>
             </div>
+            
+            <div class="btn-container" style="max-width: 420px; margin: 15px auto;">
+                <button class="btn btn-print" onclick="window.print()">🖨️ طباعة / PDF</button>
+                <button class="btn btn-img" onclick="downloadPNG()">📷 تحميل الفاتورة كصورة (PNG)</button>
+            </div>
+
+            <script>
+                function downloadPNG() {{
+                    const element = document.getElementById('receipt-capture');
+                    html2canvas(element, {{ scale: 2, useCORS: true }}).then(canvas => {{
+                        const link = document.createElement('a');
+                        link.download = 'LubaNur_Invoice_#{order_row["Order_ID"]}.png';
+                        link.href = canvas.toDataURL('image/png');
+                        link.click();
+                    }});
+                }}
+            </script>
         </body>
         </html>
         """
         
         st.download_button(
-            label="🖨️ فتح وإصدار الفاتورة الجاهزة للطباعة / PDF",
+            label="📥 اضغط هنا لفتح واجهة الفاتورة (للطباعة أو حفظ صورة PNG)",
             data=receipt_html.encode('utf-8'),
             file_name=f"Invoice_{order_row['Order_ID']}_{order_row['Customer']}.html",
             mime="text/html",
