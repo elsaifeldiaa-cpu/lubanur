@@ -208,9 +208,8 @@ def load_data():
 orders_df, stock_df, expenses_df = load_data()
 
 st.sidebar.markdown('<p class="sidebar-title">🌟 لبانور - لوحة التحكم الإدارية</p>', unsafe_allow_html=True)
-st.sidebar.markdown('<p class="version-tag">📌 الإصدار: v2:00am 27-10-2026</p>', unsafe_allow_html=True)
+st.sidebar.markdown('<p class="version-tag">📌 الإصدار: v2:30am 27-10-2026</p>', unsafe_allow_html=True)
 
-# === زر تحديث البيانات مع السيرفر في القائمة الجانبية ===
 if st.sidebar.button("🔄 تحديث البيانات مع السيرفر"):
     st.cache_data.clear()
     st.success("✅ تم تحديث ومزامنة البيانات مع السيرفر بنجاح!")
@@ -239,7 +238,6 @@ menu = menu_options[selected_label]
 if st.sidebar.button("⬅️ رجوع"):
     st.rerun()
 
-# === 💾 النسخ الاحتياطي واسترجاع البيانات ===
 st.sidebar.markdown("---")
 st.sidebar.subheader("💾 النسخ الاحتياطي واسترجاع البيانات")
 
@@ -445,7 +443,6 @@ elif menu == "فاتورة العميل (Compact Receipt)":
     st.header("🖨️ فاتورة العميل (معاينة فورية وطباعة)")
     orders_df, _, _ = load_data()
     if not orders_df.empty:
-        # عرض الفاتورة بمجرد اختيار اسم العميل/الطلب
         selected_order_id = st.selectbox("اختر الطلب / العميل", orders_df['Order_ID'].tolist(), format_func=lambda x: f"طلب #{x} - {orders_df.loc[orders_df['Order_ID']==x, 'Customer'].values[0]}")
         order_row = orders_df[orders_df['Order_ID'] == selected_order_id].iloc[0]
         
@@ -454,18 +451,18 @@ elif menu == "فاتورة العميل (Compact Receipt)":
         if formatted_items_text and not formatted_items_text.startswith("-"):
             formatted_items_text = "- " + formatted_items_text
 
-        barcode_html = f"<p><b>باركود الشحن:</b> {order_row.get('Cargo_Barcode', 'غير متوفر')}</p>" if order_row.get('Cargo_Barcode') else ""
+        barcode_str = f"<b>باركود الشحن:</b> {order_row.get('Cargo_Barcode', 'غير متوفر')}" if order_row.get('Cargo_Barcode') else ""
 
-        # معاينة مباشرة على الشاشة فور الاختيار دون تنزيل ملف HTML
-        receipt_display_html = f"""
-        <div id="receipt-box" style="max-width: 420px; margin: 20px auto; border: 2px dashed #2c3e50; border-radius: 12px; padding: 20px; background-color: #ffffff; direction: rtl; text-align: right; font-family: Tahoma, sans-serif; box-shadow: 0 4px 10px rgba(0,0,0,0.1);">
+        # استخدام st.markdown مع طريقة آمنة ونظيفة لعرض الفاتورة مباشرة دون إظهار أكواد HTML
+        st.markdown(f"""
+        <div style="max-width: 420px; margin: 20px auto; border: 2px dashed #2c3e50; border-radius: 12px; padding: 20px; background-color: #ffffff; direction: rtl; text-align: right; font-family: Tahoma, sans-serif; box-shadow: 0 4px 10px rgba(0,0,0,0.1);">
             <h3 style="text-align: center; color: #2c3e50; margin-bottom: 5px;">=== لبانور - LubaNur ===</h3>
             <p style="text-align: center; color: #666; font-size: 12px; margin-top: 0px; border-bottom: 1px dashed #ddd; padding-bottom: 10px;">السيف والضياء للاستثمار الدولي</p>
             <div style="font-size: 14px; color: #333; line-height: 1.6;">
                 <p><b>رقم الفاتورة:</b> #{order_row['Order_ID']} &nbsp;|&nbsp; <b>التاريخ:</b> {order_row['Date']}</p>
                 <p><b>العميل:</b> {order_row['Customer']} &nbsp;|&nbsp; <b>الهاتف:</b> {order_row['Phone']}</p>
                 <p><b>المنطقة:</b> {order_row['Region']}</p>
-                {barcode_html}
+                <p>{barcode_str}</p>
             </div>
             <hr style="border: 0.5px dashed #ccc;">
             <div style="font-size: 13px; color: #333;">
@@ -480,16 +477,10 @@ elif menu == "فاتورة العميل (Compact Receipt)":
             </div>
             <p style="text-align: center; font-weight: bold; color: #2c3e50; margin-top: 15px; border-top: 1px dashed #ddd; padding-top: 10px;">شكراً لتعاملكم معنا!</p>
         </div>
-        """
-        st.markdown(receipt_display_html, unsafe_allow_html=True)
+        """, unsafe_allow_html=True)
 
-        # زر طباعة مباشر
-        col_p1, col_p2 = st.columns(2)
-        with col_p1:
-            if st.button("🖨️ طباعة الفاتورة"):
-                st.components.v1.html("<script>window.print();</script>", height=0)
-        with col_p2:
-            st.info("💡 يمكنك التقاط صورة الشاشة (Screenshot) أو الضغط على طباعة لحفظها كصورة ومشاركتها عبر واتساب.")
+        if st.button("🖨️ طباعة الفاتورة"):
+            st.components.v1.html("<script>window.print();</script>", height=0)
 
 elif menu == "تعديل وحذف الفواتير (Edit & Delete)":
     st.header("✏️ تعديل وحذف الفواتير")
@@ -502,7 +493,6 @@ elif menu == "تعديل وحذف الفواتير (Edit & Delete)":
             e_phone = st.text_input("الهاتف", value=str(target_row['Phone']))
             e_region = st.text_input("المنطقة / الولاية", value=str(target_row.get('Region', '')))
             
-            # إضافة اختيار شركات الشحن في التعديل
             cargo_list = ["بدون شحن", "نول", "جيناكم", "دليلي", "وصل لي"]
             cur_cargo = str(target_row.get('Cargo_Company', 'بدون شحن'))
             cargo_idx = cargo_list.index(cur_cargo) if cur_cargo in cargo_list else 0
