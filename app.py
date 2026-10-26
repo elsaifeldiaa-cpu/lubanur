@@ -208,7 +208,7 @@ def load_data():
 orders_df, stock_df, expenses_df = load_data()
 
 st.sidebar.markdown('<p class="sidebar-title">🌟 لبانور - لوحة التحكم الإدارية</p>', unsafe_allow_html=True)
-st.sidebar.markdown('<p class="version-tag">📌 الإصدار: v2:30am 27-10-2026</p>', unsafe_allow_html=True)
+st.sidebar.markdown('<p class="version-tag">📌 الإصدار: v3:00am 27-10-2026</p>', unsafe_allow_html=True)
 
 if st.sidebar.button("🔄 تحديث البيانات مع السيرفر"):
     st.cache_data.clear()
@@ -414,33 +414,33 @@ elif menu == "🔍 تتبع الطلبات الشامل":
     orders_df, _, _ = load_data()
     
     if not orders_df.empty:
-        search_mode = st.selectbox("اختر طريقة البحث:", ["اختر طريقة البحث...", "رقم الطلب", "باركود شركة الشحن", "رقم هاتف العميل"])
+        st.markdown("### 📋 كافة الطلبات المسجلة حالياً:")
+        st.dataframe(orders_df[['Order_ID', 'Date', 'Customer', 'Phone', 'Cargo_Company', 'Cargo_Barcode', 'Delivery_Status', 'Collection_Status', 'Total']], use_container_width=True)
         
-        if search_mode != "اختر طريقة البحث...":
-            search_val = st.text_input(f"أدخل {search_mode}:")
-            if search_val:
-                q = search_val.strip()
-                if search_mode == "رقم الطلب":
-                    res = orders_df[orders_df['Order_ID'].astype(str).str.contains(q, na=False)]
-                elif search_mode == "باركود شركة الشحن":
-                    res = orders_df[orders_df['Cargo_Barcode'].astype(str).str.contains(q, na=False)]
-                else:
-                    res = orders_df[orders_df['Phone'].astype(str).str.contains(q, na=False)]
-                
-                if not res.empty:
-                    st.success(f"تم العثور على {len(res)} نتيجة:")
-                    st.dataframe(res[['Order_ID', 'Date', 'Customer', 'Phone', 'Cargo_Company', 'Cargo_Barcode', 'Delivery_Status', 'Collection_Status', 'Total']], use_container_width=True)
-                else:
-                    st.warning("⚠️ لا توجد نتائج مطابقة.")
+        st.markdown("---")
+        st.subheader("🔎 البحث المخصص:")
+        search_mode = st.selectbox("طريقة البحث:", ["رقم الطلب", "باركود شركة الشحن", "رقم هاتف العميل"])
+        search_val = st.text_input(f"أدخل قيمة {search_mode}:")
+        
+        if search_val:
+            q = search_val.strip()
+            if search_mode == "رقم الطلب":
+                res = orders_df[orders_df['Order_ID'].astype(str).str.contains(q, na=False)]
+            elif search_mode == "باركود شركة الشحن":
+                res = orders_df[orders_df['Cargo_Barcode'].astype(str).str.contains(q, na=False)]
             else:
-                st.info("الرجاء كتابة رقم البحث في الخانة أعلاه.")
-        else:
-            st.info("الرجاء اختيار طريقة البحث من القائمة أعلاه لعرض النتائج.")
+                res = orders_df[orders_df['Phone'].astype(str).str.contains(q, na=False)]
+            
+            if not res.empty:
+                st.success(f"تم العثور على {len(res)} نتيجة مطابقة:")
+                st.dataframe(res[['Order_ID', 'Date', 'Customer', 'Phone', 'Cargo_Company', 'Cargo_Barcode', 'Delivery_Status', 'Collection_Status', 'Total']], use_container_width=True)
+            else:
+                st.warning("⚠️ لا توجد نتائج مطابقة.")
     else:
-        st.info("لا توجد طلبيات مسجلة.")
+        st.info("لا توجد طلبيات مسجلة في النظام بعد.")
 
 elif menu == "فاتورة العميل (Compact Receipt)":
-    st.header("🖨️ فاتورة العميل (معاينة فورية وطباعة)")
+    st.header("🖨️ فاتورة العميل (معاينة فورية وطباعة ونسخ كصورة لصق في واتساب)")
     orders_df, _, _ = load_data()
     if not orders_df.empty:
         selected_order_id = st.selectbox("اختر الطلب / العميل", orders_df['Order_ID'].tolist(), format_func=lambda x: f"طلب #{x} - {orders_df.loc[orders_df['Order_ID']==x, 'Customer'].values[0]}")
@@ -453,34 +453,81 @@ elif menu == "فاتورة العميل (Compact Receipt)":
 
         barcode_str = f"<b>باركود الشحن:</b> {order_row.get('Cargo_Barcode', 'غير متوفر')}" if order_row.get('Cargo_Barcode') else ""
 
-        # استخدام st.markdown مع طريقة آمنة ونظيفة لعرض الفاتورة مباشرة دون إظهار أكواد HTML
-        st.markdown(f"""
-        <div style="max-width: 420px; margin: 20px auto; border: 2px dashed #2c3e50; border-radius: 12px; padding: 20px; background-color: #ffffff; direction: rtl; text-align: right; font-family: Tahoma, sans-serif; box-shadow: 0 4px 10px rgba(0,0,0,0.1);">
-            <h3 style="text-align: center; color: #2c3e50; margin-bottom: 5px;">=== لبانور - LubaNur ===</h3>
-            <p style="text-align: center; color: #666; font-size: 12px; margin-top: 0px; border-bottom: 1px dashed #ddd; padding-bottom: 10px;">السيف والضياء للاستثمار الدولي</p>
-            <div style="font-size: 14px; color: #333; line-height: 1.6;">
-                <p><b>رقم الفاتورة:</b> #{order_row['Order_ID']} &nbsp;|&nbsp; <b>التاريخ:</b> {order_row['Date']}</p>
-                <p><b>العميل:</b> {order_row['Customer']} &nbsp;|&nbsp; <b>الهاتف:</b> {order_row['Phone']}</p>
-                <p><b>المنطقة:</b> {order_row['Region']}</p>
-                <p>{barcode_str}</p>
+        # تصميم مدمج مع مكتبة html2canvas لنسخ الفاتورة كصورة إلى الحافظة (Clipboard) للغصق المباشر في واتساب
+        receipt_html_snippet = f"""
+        <!DOCTYPE html>
+        <html dir="rtl" lang="ar">
+        <head>
+            <meta charset="utf-8">
+            <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+            <style>
+                body {{ font-family: Tahoma, sans-serif; background: #fff; margin: 0; padding: 10px; }}
+                .receipt-box {{ max-width: 420px; margin: 0 auto; border: 2px dashed #2c3e50; border-radius: 12px; padding: 20px; background-color: #ffffff; direction: rtl; text-align: right; box-shadow: 0 4px 10px rgba(0,0,0,0.1); }}
+                h3 {{ text-align: center; color: #2c3e50; margin-bottom: 5px; }}
+                .tagline {{ text-align: center; color: #666; font-size: 12px; margin-top: 0px; border-bottom: 1px dashed #ddd; padding-bottom: 10px; }}
+                .info {{ font-size: 14px; color: #333; line-height: 1.6; }}
+                .items {{ font-size: 13px; color: #333; background: #f9f9f9; padding: 10px; border-radius: 6px; line-height: 1.6; margin: 10px 0; }}
+                .total {{ font-size: 16px; color: #007bff; font-weight: bold; text-align: center; margin-top: 10px; }}
+                .btn-container {{ display: flex; gap: 10px; justify-content: center; margin-top: 15px; flex-wrap: wrap; }}
+                .btn {{ padding: 10px 18px; border: none; border-radius: 6px; font-weight: bold; cursor: pointer; text-decoration: none; font-size: 14px; color: white; }}
+                .btn-copy {{ background-color: #007bff; }}
+                .btn-print {{ background-color: #28a745; }}
+                .toast {{ text-align: center; color: green; font-weight: bold; margin-top: 8px; font-size: 13px; }}
+            </style>
+        </head>
+        <body>
+            <div id="receipt-capture" class="receipt-box">
+                <h3>=== لبانور - LubaNur ===</h3>
+                <div class="tagline">السيف والضياء للاستثمار الدولي</div>
+                <div class="info">
+                    <p><b>رقم الفاتورة:</b> #{order_row['Order_ID']} &nbsp;|&nbsp; <b>التاريخ:</b> {order_row['Date']}</p>
+                    <p><b>العميل:</b> {order_row['Customer']} &nbsp;|&nbsp; <b>الهاتف:</b> {order_row['Phone']}</p>
+                    <p><b>المنطقة:</b> {order_row['Region']}</p>
+                    <p>{barcode_str}</p>
+                </div>
+                <hr style="border: 0.5px dashed #ccc;">
+                <strong>المنتجات:</strong>
+                <div class="items">{formatted_items_text}</div>
+                <hr style="border: 0.5px dashed #ccc;">
+                <div class="info">
+                    <p><b>قيمة المنتجات:</b> {order_row['Products_Total']} ر.ع</p>
+                    <p><b>سعر الشحن:</b> {order_row['Shipping_Price']} ر.ع</p>
+                    <div class="total">الإجمالي الكلي: {order_row['Total']} ر.ع</div>
+                </div>
+                <p style="text-align: center; font-weight: bold; color: #2c3e50; margin-top: 15px; border-top: 1px dashed #ddd; padding-top: 10px;">شكراً لتعاملكم معنا!</p>
             </div>
-            <hr style="border: 0.5px dashed #ccc;">
-            <div style="font-size: 13px; color: #333;">
-                <p style="font-weight: bold; margin-bottom: 5px;">المنتجات:</p>
-                <div style="padding-right: 5px; line-height: 1.6; color: #444;">{formatted_items_text}</div>
+            
+            <div class="btn-container">
+                <button class="btn btn-copy" onclick="copyImage()">📋 نسخ الفاتورة كصورة (للصق بواتساب)</button>
+                <button class="btn btn-print" onclick="window.print()">🖨️ طباعة</button>
             </div>
-            <hr style="border: 0.5px dashed #ccc;">
-            <div style="font-size: 14px; color: #333; line-height: 1.8;">
-                <p><b>قيمة المنتجات:</b> {order_row['Products_Total']} ر.ع</p>
-                <p><b>سعر الشحن:</b> {order_row['Shipping_Price']} ر.ع</p>
-                <p style="font-size: 16px; color: #007bff; font-weight: bold;">الإجمالي الكلي: {order_row['Total']} ر.ع</p>
-            </div>
-            <p style="text-align: center; font-weight: bold; color: #2c3e50; margin-top: 15px; border-top: 1px dashed #ddd; padding-top: 10px;">شكراً لتعاملكم معنا!</p>
-        </div>
-        """, unsafe_allow_html=True)
+            <div id="toast-msg" class="toast"></div>
 
-        if st.button("🖨️ طباعة الفاتورة"):
-            st.components.v1.html("<script>window.print();</script>", height=0)
+            <script>
+                function copyImage() {{
+                    const el = document.getElementById('receipt-capture');
+                    html2canvas(el, {{ scale: 2, useCORS: true }}).then(canvas => {{
+                        canvas.toBlob(blob => {{
+                            try {{
+                                navigator.clipboard.write([
+                                    new ClipboardItem({{ 'image/png': blob }})
+                                ]).then(() => {{
+                                    document.getElementById('toast-msg').innerText = '✅ تم نسخ صورة الفاتورة بنجاح! يمكنك لصقها الآن في واتساب (Ctrl+V)';
+                                }}).catch(err => {{
+                                    alert('تعذر النسخ التلقائي للحافظة: ' + err);
+                                }});
+                            }} catch(e) {{
+                                alert('متصفحك لا يدعم النسخ المباشر للحافظة، يمكنك حفظها أو أخذ لقطة شاشة.');
+                            }}
+                        }});
+                    }});
+                }}
+            </script>
+        </body>
+        </html>
+        """
+        
+        st.components.v1.html(receipt_html_snippet, height=620)
 
 elif menu == "تعديل وحذف الفواتير (Edit & Delete)":
     st.header("✏️ تعديل وحذف الفواتير")
