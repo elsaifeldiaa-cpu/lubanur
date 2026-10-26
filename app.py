@@ -208,7 +208,7 @@ def load_data():
 orders_df, stock_df, expenses_df = load_data()
 
 st.sidebar.markdown('<p class="sidebar-title">🌟 لبانور - لوحة التحكم الإدارية</p>', unsafe_allow_html=True)
-st.sidebar.markdown('<p class="version-tag">📌 الإصدار: v3:30am 27-10-2026</p>', unsafe_allow_html=True)
+st.sidebar.markdown('<p class="version-tag">📌 الإصدار: v4:00am 27-10-2026</p>', unsafe_allow_html=True)
 
 if st.sidebar.button("🔄 تحديث البيانات مع السيرفر"):
     st.cache_data.clear()
@@ -223,6 +223,7 @@ menu_options = {
     "📑 تقرير الشحن (شركات الشحن)": "تقرير الشحن لشركة الشحن (تقرير الاستلام)",
     "📅 تقرير الطلبات للفترة مع الأصناف": "تقرير الطلبات للفترة مع الأصناف",
     "💵 متابعة التحصيل المالي": "متابعة التحصيل المالي",
+    "📊 التعديل الجماعي الشامل (شيت إكسيل)": "📊 التعديل الجماعي الشامل (شيت إكسيل)",
     "✏️ تعديل وحذف الفواتير": "تعديل وحذف الفواتير (Edit & Delete)",
     "🖨️ فاتورة العميل (Compact)": "فاتورة العميل (Compact Receipt)",
     "💸 إدارة المصروفات": "إدارة المصروفات (Expenses)",
@@ -432,6 +433,34 @@ elif menu == "تتبع التوصيل والشحن":
     else:
         st.info("لا توجد طلبيات مسجلة في النظام بعد.")
 
+elif menu == "📊 التعديل الجماعي الشامل (شيت إكسيل)":
+    st.header("📊 التعديل الجماعي الفوري للطلبات (شيت إكسيل تفاعلي)")
+    st.markdown("💡 يمكنك تعديل بيانات أي عدد من الطلبات مباشرة في الجدول أدناه (مثل اسم العميل، الهاتف، باركود الشحن، الشركات، وقيمة المنتجات)، ثم النقر على زر **حفظ جميع التعديلات** ليتم حفظها دفعة واحدة!")
+    
+    orders_df, stock_df, expenses_df = load_data()
+    
+    if not orders_df.empty:
+        # استخدام st.data_editor لتوفير تجربة تشبه شيت إكسيل
+        edited_orders_df = st.data_editor(orders_df, num_rows="dynamic", use_container_width=True, key="batch_order_editor")
+        
+        if st.button("💾 حفظ جميع التعديلات دفعة واحدة"):
+            try:
+                # إعادة حساب الإجمالي الكلي تلقائياً لكل طلب
+                edited_orders_df['Total'] = pd.to_numeric(edited_orders_df['Products_Total'], errors='coerce').fillna(0) + pd.to_numeric(edited_orders_df['Shipping_Price'], errors='coerce').fillna(0)
+                
+                with pd.ExcelWriter(DB_FILE, engine='openpyxl') as writer:
+                    edited_orders_df.to_excel(writer, sheet_name="Orders", index=False)
+                    stock_df.to_excel(writer, sheet_name="Stock", index=False)
+                    expenses_df.to_excel(writer, sheet_name="Expenses", index=False)
+                
+                st.cache_data.clear()
+                st.success("🎉 تم حفظ جميع التعديلات وتحديث قاعدة البيانات بنجاح!")
+                st.rerun()
+            except Exception as e:
+                st.error(f"❌ حدث خطأ أثناء حفظ التعديلات: {e}")
+    else:
+        st.info("لا توجد طلبيات مسجلة في النظام بعد.")
+
 elif menu == "فاتورة العميل (Compact Receipt)":
     st.header("🖨️ فاتورة العميل (معاينة فورية وطباعة ونسخ كصورة لصق في واتساب)")
     orders_df, _, _ = load_data()
@@ -446,6 +475,7 @@ elif menu == "فاتورة العميل (Compact Receipt)":
 
         barcode_str = f"<b>باركود الشحن:</b> {order_row.get('Cargo_Barcode', 'غير متوفر')}" if order_row.get('Cargo_Barcode') else ""
 
+        # تصميم مدمج مع دعم التمرير الكامل (Scrollable) للفواتير الكويلة جداً
         receipt_html_snippet = f"""
         <!DOCTYPE html>
         <html dir="rtl" lang="ar">
@@ -454,13 +484,13 @@ elif menu == "فاتورة العميل (Compact Receipt)":
             <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
             <style>
                 body {{ font-family: Tahoma, sans-serif; background: #fff; margin: 0; padding: 10px; }}
-                .receipt-box {{ max-width: 420px; margin: 0 auto; border: 2px dashed #2c3e50; border-radius: 12px; padding: 20px; background-color: #ffffff; direction: rtl; text-align: right; box-shadow: 0 4px 10px rgba(0,0,0,0.1); }}
+                .receipt-container {{ max-height: 750px; overflow-y: auto; border: 2px dashed #2c3e50; border-radius: 12px; padding: 20px; background-color: #ffffff; direction: rtl; text-align: right; box-shadow: 0 4px 10px rgba(0,0,0,0.1); max-width: 420px; margin: 0 auto; }}
                 h3 {{ text-align: center; color: #2c3e50; margin-bottom: 5px; }}
                 .tagline {{ text-align: center; color: #666; font-size: 12px; margin-top: 0px; border-bottom: 1px dashed #ddd; padding-bottom: 10px; }}
                 .info {{ font-size: 14px; color: #333; line-height: 1.6; }}
                 .items {{ font-size: 13px; color: #333; background: #f9f9f9; padding: 10px; border-radius: 6px; line-height: 1.6; margin: 10px 0; }}
                 .total {{ font-size: 16px; color: #007bff; font-weight: bold; text-align: center; margin-top: 10px; }}
-                .btn-container {{ display: flex; gap: 10px; justify-content: center; margin-top: 15px; flex-wrap: wrap; }}
+                .btn-container {{ display: flex; gap: 10px; justify-content: center; margin-top: 15px; flex-wrap: wrap; max-width: 420px; margin-left: auto; margin-right: auto; }}
                 .btn {{ padding: 10px 18px; border: none; border-radius: 6px; font-weight: bold; cursor: pointer; text-decoration: none; font-size: 14px; color: white; }}
                 .btn-copy {{ background-color: #007bff; }}
                 .btn-print {{ background-color: #28a745; }}
@@ -468,7 +498,7 @@ elif menu == "فاتورة العميل (Compact Receipt)":
             </style>
         </head>
         <body>
-            <div id="receipt-capture" class="receipt-box">
+            <div id="receipt-capture" class="receipt-container">
                 <h3>=== لبانور - LubaNur ===</h3>
                 <div class="tagline">السيف والضياء للاستثمار الدولي</div>
                 <div class="info">
@@ -498,7 +528,7 @@ elif menu == "فاتورة العميل (Compact Receipt)":
             <script>
                 function copyImage() {{
                     const el = document.getElementById('receipt-capture');
-                    html2canvas(el, {{ scale: 2, useCORS: true }}).then(canvas => {{
+                    html2canvas(el, {{ scale: 2, useCORS: true, scrollY: -window.scrollY }}) .then(canvas => {{
                         canvas.toBlob(blob => {{
                             try {{
                                 navigator.clipboard.write([
@@ -509,7 +539,7 @@ elif menu == "فاتورة العميل (Compact Receipt)":
                                     alert('تعذر النسخ التلقائي للحافظة: ' + err);
                                 }});
                             }} catch(e) {{
-                                alert('متصفحك لا يدعم النسخ المباشر للحافظة، يمكنك حفظها أو أخذ لقطة شاشة.');
+                                alert('متصفحك لا يدعم النسخ المباشر للحافظة، يمكنك أخذ لقطة شاشة.');
                             }}
                         }});
                     }});
@@ -519,7 +549,7 @@ elif menu == "فاتورة العميل (Compact Receipt)":
         </html>
         """
         
-        st.components.v1.html(receipt_html_snippet, height=620)
+        st.components.v1.html(receipt_html_snippet, height=720)
 
 elif menu == "تعديل وحذف الفواتير (Edit & Delete)":
     st.header("✏️ تعديل وحذف الفواتير")
@@ -609,7 +639,7 @@ elif menu == "التقرير المالي التفصيلي (Financial Report)":
     orders_df, stock_df, expenses_df = load_data()
     total_products_value = orders_df['Products_Total'].sum() if not orders_df.empty else 0.0
     total_shipping = orders_df['Shipping_Price'].sum() if not orders_df.empty else 0.0
-    total_expenses = expenses_df['Amount'].sum() if not orders_df.empty else 0.0
+    total_expenses = expenses_df['Amount'].sum() if not expenses_df.empty else 0.0
     net_treasury = total_products_value - total_expenses
 
     m1, m2, m3, m4 = st.columns(4)
