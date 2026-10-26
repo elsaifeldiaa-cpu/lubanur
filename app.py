@@ -208,7 +208,7 @@ def load_data():
 orders_df, stock_df, expenses_df = load_data()
 
 st.sidebar.markdown('<p class="sidebar-title">🌟 لبانور - لوحة التحكم الإدارية</p>', unsafe_allow_html=True)
-st.sidebar.markdown('<p class="version-tag">📌 الإصدار: v3:00am 27-10-2026</p>', unsafe_allow_html=True)
+st.sidebar.markdown('<p class="version-tag">📌 الإصدار: v3:30am 27-10-2026</p>', unsafe_allow_html=True)
 
 if st.sidebar.button("🔄 تحديث البيانات مع السيرفر"):
     st.cache_data.clear()
@@ -219,7 +219,6 @@ menu_options = {
     "📊 اللوحة الرئيسية (Dashboard & Financials)": "اللوحة الرئيسية (Dashboard & Financials)",
     "📝 تسجيل طلب جديد": "تسجيل طلب جديد (فاتورة متعددة الأصناف)",
     "⏳ الطلبات قيد التحضير": "الطلبات التي لم يتم تحضيرها (Pending Preparation)",
-    "🔍 تتبع الطلبات الشامل": "تتبع الطلبات الشامل (بحث بالهاتف أو الباركود)",
     "🚚 تتبع التوصيل والشحن": "تتبع التوصيل والشحن",
     "📑 تقرير الشحن (شركات الشحن)": "تقرير الشحن لشركة الشحن (تقرير الاستلام)",
     "📅 تقرير الطلبات للفترة مع الأصناف": "تقرير الطلبات للفترة مع الأصناف",
@@ -409,33 +408,27 @@ elif menu == "الطلبات التي لم يتم تحضيرها (Pending Prepar
     else:
         st.success("🎉 لا توجد طلبيات قيد التحضير حالياً.")
 
-elif menu == "🔍 تتبع الطلبات الشامل":
-    st.header("🔍 نظام تتبع الطلبات الشامل")
+elif menu == "تتبع التوصيل والشحن":
+    st.header("🚚 متابعة التوصيل والشحن")
     orders_df, _, _ = load_data()
     
     if not orders_df.empty:
-        st.markdown("### 📋 كافة الطلبات المسجلة حالياً:")
-        st.dataframe(orders_df[['Order_ID', 'Date', 'Customer', 'Phone', 'Cargo_Company', 'Cargo_Barcode', 'Delivery_Status', 'Collection_Status', 'Total']], use_container_width=True)
+        st.markdown("### 🔎 خيارات البحث والتصفية:")
+        filter_type = st.selectbox("بحث بواسطة:", ["عرض كافة الطلبات", "باركود شركة الشحن", "اسم العميل", "رقم الهاتف"])
         
-        st.markdown("---")
-        st.subheader("🔎 البحث المخصص:")
-        search_mode = st.selectbox("طريقة البحث:", ["رقم الطلب", "باركود شركة الشحن", "رقم هاتف العميل"])
-        search_val = st.text_input(f"أدخل قيمة {search_mode}:")
+        display_df = orders_df.copy()
+        if filter_type != "عرض كافة الطلبات":
+            search_input = st.text_input(f"أدخل {filter_type}:")
+            if search_input:
+                q = search_input.strip()
+                if filter_type == "باركود شركة الشحن":
+                    display_df = orders_df[orders_df['Cargo_Barcode'].astype(str).str.contains(q, na=False)]
+                elif filter_type == "اسم العميل":
+                    display_df = orders_df[orders_df['Customer'].astype(str).str.contains(q, na=False)]
+                elif filter_type == "رقم الهاتف":
+                    display_df = orders_df[orders_df['Phone'].astype(str).str.contains(q, na=False)]
         
-        if search_val:
-            q = search_val.strip()
-            if search_mode == "رقم الطلب":
-                res = orders_df[orders_df['Order_ID'].astype(str).str.contains(q, na=False)]
-            elif search_mode == "باركود شركة الشحن":
-                res = orders_df[orders_df['Cargo_Barcode'].astype(str).str.contains(q, na=False)]
-            else:
-                res = orders_df[orders_df['Phone'].astype(str).str.contains(q, na=False)]
-            
-            if not res.empty:
-                st.success(f"تم العثور على {len(res)} نتيجة مطابقة:")
-                st.dataframe(res[['Order_ID', 'Date', 'Customer', 'Phone', 'Cargo_Company', 'Cargo_Barcode', 'Delivery_Status', 'Collection_Status', 'Total']], use_container_width=True)
-            else:
-                st.warning("⚠️ لا توجد نتائج مطابقة.")
+        st.dataframe(display_df[['Order_ID', 'Date', 'Customer', 'Phone', 'Region', 'Cargo_Company', 'Cargo_Barcode', 'Delivery_Status']], use_container_width=True)
     else:
         st.info("لا توجد طلبيات مسجلة في النظام بعد.")
 
@@ -453,7 +446,6 @@ elif menu == "فاتورة العميل (Compact Receipt)":
 
         barcode_str = f"<b>باركود الشحن:</b> {order_row.get('Cargo_Barcode', 'غير متوفر')}" if order_row.get('Cargo_Barcode') else ""
 
-        # تصميم مدمج مع مكتبة html2canvas لنسخ الفاتورة كصورة إلى الحافظة (Clipboard) للغصق المباشر في واتساب
         receipt_html_snippet = f"""
         <!DOCTYPE html>
         <html dir="rtl" lang="ar">
@@ -644,12 +636,6 @@ elif menu == "طلب توريد المخزون الحرِج":
         st.dataframe(critical_stock, use_container_width=True)
     else:
         st.success("🎉 ممتاز! جميع المخزونات في مستويات آمنة.")
-
-elif menu == "تتبع التوصيل والشحن":
-    st.header("🚚 متابعة التوصيل والشحن")
-    orders_df, _, _ = load_data()
-    if not orders_df.empty:
-        st.dataframe(orders_df[['Order_ID', 'Date', 'Customer', 'Phone', 'Region', 'Cargo_Company', 'Cargo_Barcode', 'Delivery_Status']], use_container_width=True)
 
 elif menu == "تقرير الشحن لشركة الشحن (تقرير الاستلام)":
     st.header("📑 تقرير تسليم الشحنات لشركات الشحن")
