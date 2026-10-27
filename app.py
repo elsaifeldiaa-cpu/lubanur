@@ -208,7 +208,7 @@ def load_data():
 orders_df, stock_df, expenses_df = load_data()
 
 st.sidebar.markdown('<p class="sidebar-title">🌟 لبانور - لوحة التحكم الإدارية</p>', unsafe_allow_html=True)
-st.sidebar.markdown('<p class="version-tag">📌 الإصدار: v4:00am 27-10-2026</p>', unsafe_allow_html=True)
+st.sidebar.markdown('<p class="version-tag">📌 الإصدار: v4:30am 27-10-2026</p>', unsafe_allow_html=True)
 
 if st.sidebar.button("🔄 تحديث البيانات مع السيرفر"):
     st.cache_data.clear()
@@ -410,16 +410,22 @@ elif menu == "الطلبات التي لم يتم تحضيرها (Pending Prepar
         st.success("🎉 لا توجد طلبيات قيد التحضير حالياً.")
 
 elif menu == "تتبع التوصيل والشحن":
-    st.header("🚚 متابعة التوصيل والشحن")
-    orders_df, _, _ = load_data()
+    st.header("🚚 متابعة التوصيل والشحن وتفاصيل الطلبات")
+    orders_df, stock_df, expenses_df = load_data()
     
     if not orders_df.empty:
-        st.markdown("### 🔎 خيارات البحث والتصفية:")
-        filter_type = st.selectbox("بحث بواسطة:", ["عرض كافة الطلبات", "باركود شركة الشحن", "اسم العميل", "رقم الهاتف"])
+        st.markdown("### 🔎 خيارات البحث والتصفية المتقدمة:")
+        filter_type = st.selectbox("بحث بواسطة:", ["عرض كافة الطلبات", "باركود شركة الشحن", "اسم العميل", "رقم الهاتف", "تاريخ الطلب", "شركة الشحن"])
         
         display_df = orders_df.copy()
         if filter_type != "عرض كافة الطلبات":
-            search_input = st.text_input(f"أدخل {filter_type}:")
+            if filter_type == "تاريخ الطلب":
+                search_input = str(st.date_input("اختر التاريخ للتصفية", datetime.date.today()))
+            elif filter_type == "شركة الشحن":
+                search_input = st.selectbox("اختر شركة الشحن", ["نول", "جيناكم", "دليلي", "وصل لي", "بدون شحن"])
+            else:
+                search_input = st.text_input(f"أدخل قيمة {filter_type}:")
+            
             if search_input:
                 q = search_input.strip()
                 if filter_type == "باركود شركة الشحن":
@@ -428,8 +434,79 @@ elif menu == "تتبع التوصيل والشحن":
                     display_df = orders_df[orders_df['Customer'].astype(str).str.contains(q, na=False)]
                 elif filter_type == "رقم الهاتف":
                     display_df = orders_df[orders_df['Phone'].astype(str).str.contains(q, na=False)]
+                elif filter_type == "تاريخ الطلب":
+                    display_df = orders_df[orders_df['Date'].astype(str).str.contains(q, na=False)]
+                elif filter_type == "شركة الشحن":
+                    display_df = orders_df[orders_df['Cargo_Company'].astype(str).str.contains(q, na=False)]
         
-        st.dataframe(display_df[['Order_ID', 'Date', 'Customer', 'Phone', 'Region', 'Cargo_Company', 'Cargo_Barcode', 'Delivery_Status']], use_container_width=True)
+        st.dataframe(display_df[['Order_ID', 'Date', 'Customer', 'Phone', 'Region', 'Cargo_Company', 'Cargo_Barcode', 'Delivery_Status', 'Collection_Status']], use_container_width=True)
+        
+        st.markdown("---")
+        st.subheader("📋 معاينة وتعديل تفاصيل الطلب المحدد:")
+        sel_order_id = st.selectbox("اختر رقم الطلب لعرض وتعديل تفاصيله:", display_df['Order_ID'].tolist() if not display_df.empty else orders_df['Order_ID'].tolist())
+        
+        if sel_order_id:
+            row_idx = orders_df[orders_df['Order_ID'] == sel_order_id].index[0]
+            curr_row = orders_df.loc[row_idx]
+            
+            st.info(f"📌 **تفاصيل الطلب رقم #{sel_order_id}**")
+            
+            col_d1, col_d2 = st.columns(2)
+            with col_d1:
+                st.write(f"👤 **اسم العميل:** {curr_row['Customer']}")
+                st.write(f"📞 **رقم الهاتف:** {curr_row['Phone']}")
+                st.write(f"📍 **المنطقة:** {curr_row['Region']}")
+                st.write(f"📅 **تاريخ الطلب:** {curr_row['Date']}")
+            with col_d2:
+                st.write(f"🚚 **شركة الشحن:** {curr_row['Cargo_Company']}")
+                st.write(f"🏷️ **باركود الشحن:** {curr_row.get('Cargo_Barcode', 'غير متوفر')}")
+                st.write(f"💰 **إجمالي الطلب:** {curr_row['Total']} ر.ع (منتجات: {curr_row['Products_Total']} + شحن: {curr_row['Shipping_Price']})")
+            
+            st.markdown(f"📦 **تفاصيل المنتجات والأصناف:** `{curr_row['Items_Detail']}`")
+            
+            st.markdown("---")
+            st.subheader("✏️ تعديل حالات الطلب والشحن والتحصيل:")
+            
+            with st.form(f"update_order_card_{sel_order_id}"):
+                c_up1, c_up2, c_up3, c_up4 = st.columns(4)
+                
+                delivery_status_list = ["قيد التحضير", "تم التسليم لشركة الشحن", "جاري التوصيل", "تم تسليم العميل", "مرتجع"]
+                cur_d_stat = str(curr_row.get('Delivery_Status', 'قيد التحضير'))
+                d_idx = delivery_status_list.index(cur_d_stat) if cur_d_stat in delivery_status_list else 0
+                new_d_stat = c_up1.selectbox("حالة التوصيل", delivery_status_list, index=d_idx)
+                
+                ord_pay_list = ["تم الدفع", "لم يتم الدفع (COD)"]
+                cur_o_pay = str(curr_row.get('Order_Payment', 'تم الدفع'))
+                o_idx = ord_pay_list.index(cur_o_pay) if cur_o_pay in ord_pay_list else 0
+                new_o_pay = c_up2.selectbox("حالة دفع الطلب", ord_pay_list, index=o_idx)
+                
+                shp_pay_list = ["تم دفع الشحن", "لم يتم دفع الشحن"]
+                cur_s_pay = str(curr_row.get('Shipping_Payment', 'تم دفع الشحن'))
+                s_idx = shp_pay_list.index(cur_s_pay) if cur_s_pay in shp_pay_list else 0
+                new_s_pay = c_up3.selectbox("حالة دفع الشحن", shp_pay_list, index=s_idx)
+                
+                coll_list = ["مدفوع بالكامل", "قيد التحصيل"]
+                cur_coll = str(curr_row.get('Collection_Status', 'قيد التحصيل'))
+                c_idx = coll_list.index(cur_coll) if cur_coll in coll_list else 1
+                new_coll = c_up4.selectbox("حالة التحصيل من الشركة", coll_list, index=c_idx)
+                
+                new_barcode = st.text_input("تعديل باركود شركة الشحن", value=str(curr_row.get('Cargo_Barcode', '')))
+                
+                if st.form_submit_button("💾 حفظ تعديلات هذا الطلب"):
+                    orders_df.loc[row_idx, 'Delivery_Status'] = new_d_stat
+                    orders_df.loc[row_idx, 'Order_Payment'] = new_o_pay
+                    orders_df.loc[row_idx, 'Shipping_Payment'] = new_s_pay
+                    orders_df.loc[row_idx, 'Collection_Status'] = new_coll
+                    orders_df.loc[row_idx, 'Cargo_Barcode'] = new_barcode
+                    
+                    with pd.ExcelWriter(DB_FILE, engine='openpyxl') as writer:
+                        orders_df.to_excel(writer, sheet_name="Orders", index=False)
+                        stock_df.to_excel(writer, sheet_name="Stock", index=False)
+                        expenses_df.to_excel(writer, sheet_name="Expenses", index=False)
+                    
+                    st.cache_data.clear()
+                    st.success(f"✅ تم تحديث بيانات وحالات الطلب رقم #{sel_order_id} بنجاح!")
+                    st.rerun()
     else:
         st.info("لا توجد طلبيات مسجلة في النظام بعد.")
 
@@ -440,12 +517,10 @@ elif menu == "📊 التعديل الجماعي الشامل (شيت إكسيل
     orders_df, stock_df, expenses_df = load_data()
     
     if not orders_df.empty:
-        # استخدام st.data_editor لتوفير تجربة تشبه شيت إكسيل
         edited_orders_df = st.data_editor(orders_df, num_rows="dynamic", use_container_width=True, key="batch_order_editor")
         
         if st.button("💾 حفظ جميع التعديلات دفعة واحدة"):
             try:
-                # إعادة حساب الإجمالي الكلي تلقائياً لكل طلب
                 edited_orders_df['Total'] = pd.to_numeric(edited_orders_df['Products_Total'], errors='coerce').fillna(0) + pd.to_numeric(edited_orders_df['Shipping_Price'], errors='coerce').fillna(0)
                 
                 with pd.ExcelWriter(DB_FILE, engine='openpyxl') as writer:
@@ -475,7 +550,6 @@ elif menu == "فاتورة العميل (Compact Receipt)":
 
         barcode_str = f"<b>باركود الشحن:</b> {order_row.get('Cargo_Barcode', 'غير متوفر')}" if order_row.get('Cargo_Barcode') else ""
 
-        # تصميم مدمج مع دعم التمرير الكامل (Scrollable) للفواتير الكويلة جداً
         receipt_html_snippet = f"""
         <!DOCTYPE html>
         <html dir="rtl" lang="ar">
@@ -528,7 +602,7 @@ elif menu == "فاتورة العميل (Compact Receipt)":
             <script>
                 function copyImage() {{
                     const el = document.getElementById('receipt-capture');
-                    html2canvas(el, {{ scale: 2, useCORS: true, scrollY: -window.scrollY }}) .then(canvas => {{
+                    html2canvas(el, {{ scale: 2, useCORS: true, scrollY: -window.scrollY }}).then(canvas => {{
                         canvas.toBlob(blob => {{
                             try {{
                                 navigator.clipboard.write([
@@ -639,7 +713,7 @@ elif menu == "التقرير المالي التفصيلي (Financial Report)":
     orders_df, stock_df, expenses_df = load_data()
     total_products_value = orders_df['Products_Total'].sum() if not orders_df.empty else 0.0
     total_shipping = orders_df['Shipping_Price'].sum() if not orders_df.empty else 0.0
-    total_expenses = expenses_df['Amount'].sum() if not expenses_df.empty else 0.0
+    total_expenses = expenses_df['Amount'].sum() if not orders_df.empty else 0.0
     net_treasury = total_products_value - total_expenses
 
     m1, m2, m3, m4 = st.columns(4)
