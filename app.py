@@ -239,7 +239,7 @@ def load_data():
 orders_df, stock_df, expenses_df, cargo_companies_list = load_data()
 
 st.sidebar.markdown('<p class="sidebar-title">🌟 لبانور - لوحة التحكم الإدارية</p>', unsafe_allow_html=True)
-st.sidebar.markdown('<p class="version-tag">📌 الإصدار: v9:00am 27-10-2026</p>', unsafe_allow_html=True)
+st.sidebar.markdown('<p class="version-tag">📌 الإصدار: v10:00am 27-10-2026</p>', unsafe_allow_html=True)
 
 if st.sidebar.button("🔄 تحديث البيانات مع السيرفر"):
     st.cache_data.clear()
@@ -249,13 +249,11 @@ if st.sidebar.button("🔄 تحديث البيانات مع السيرفر"):
 menu_options = {
     "📊 اللوحة الرئيسية (Dashboard & Financials)": "اللوحة الرئيسية (Dashboard & Financials)",
     "📝 تسجيل طلب جديد": "تسجيل طلب جديد (فاتورة متعددة الأصناف)",
-    "⏳ الطلبات قيد التحضير": "الطلبات التي لم يتم تحضيرها (Pending Preparation)",
-    "🚚 تتبع التوصيل والشحن": "تتبع التوصيل والشحن",
+    "🚚 تتبع التوصيل والشحن (والطلبات قيد التحضير)": "تتبع التوصيل والشحن",
     "📦 إدارة المخزون والجرد": "إدارة المخزون والجرد",
     "🚚 إدارة شركات الشحن": "إدارة شركات الشحن",
     "📑 تقرير الشحن (شركات الشحن)": "تقرير الشحن لشركة الشحن (تقرير الاستلام)",
     "📅 تقرير الطلبات للفترة مع الأصناف": "تقرير الطلبات للفترة مع الأصناف",
-    "💵 متابعة التحصيل المالي": "متابعة التحصيل المالي",
     "📊 التعديل الجماعي الشامل (شيت إكسيل)": "📊 التعديل الجماعي الشامل (شيت إكسيل)",
     "✏️ تعديل وحذف الفواتير": "تعديل وحذف الفواتير (Edit & Delete)",
     "🖨️ فاتورة العميل (Compact)": "فاتورة العميل (Compact Receipt)",
@@ -369,16 +367,20 @@ elif menu == "تسجيل طلب جديد (فاتورة متعددة الأصنا
     with col_inf2:
         order_date = st.date_input("تاريخ الطلب (Date)", datetime.date.today(), key="new_date")
         cargo_company = st.selectbox("شركة الشحن (Cargo Company)", cargo_companies_list, key="new_cargo")
-        delivery_type = st.selectbox("نوع التسليم (Delivery Type)", ["من المكتب (Pickup)", "إلى المنزل (Home Delivery)"], key="new_dtype")
+        delivery_type = st.selectbox("نوع التسليم (Delivery Type)", ["من المكتب (Pickup)", "إلى المنزل (Home Delivery)", "بدون"], key="new_dtype")
     with col_inf3:
         shipping_price = st.number_input("سعر الشحن (Shipping Price OMR)", min_value=0.0, value=1.0, key="new_ship_price")
-        # القيمة التلقائية "لم يتم الدفع" وإزالة الخيار المكرر
         order_payment = st.selectbox("حالة دفع الطلب (Order Payment Status)", ["لم يتم الدفع", "تم الدفع"], key="new_ord_pay")
         shipping_payment = st.selectbox("حالة دفع قيمة الشحن (Shipping Payment Status)", ["لم يتم دفع الشحن", "تم دفع الشحن"], key="new_shp_pay")
         bags = st.number_input("عدد الأكياس (Bags)", min_value=0, value=1, key="new_bags")
 
     st.markdown("---")
-    st.subheader("2️⃣ إضافة منتجات الفاتورة")
+    st.subheader("2️⃣ إضافة منتجات الفاتورة (مع عرض المخزون الحالي)")
+    
+    # عرض المخزون المصغر لتسهيل المتابعة أثناء الطلب
+    with st.expander("📦 عرض رصيد المخزون الحالي لكل الأصناف"):
+        st.dataframe(stock_df, use_container_width=True)
+
     col_item1, col_item2, col_item3 = st.columns([3, 1, 1])
     with col_item1:
         sel_item = st.selectbox("اختر المنتج", stock_df['Item_Name'].tolist(), key="cart_sel_item")
@@ -387,7 +389,7 @@ elif menu == "تسجيل طلب جديد (فاتورة متعددة الأصنا
     with col_item3:
         st.write("")
         st.write("")
-        if st.button("➕ إضافة للصسلة"):
+        if st.button("➕ إضافة للسلة"):
             st.session_state.cart.append({"Item": sel_item, "Qty": sel_qty})
             st.success("تمت الإضافة!")
             st.rerun()
@@ -443,7 +445,7 @@ elif menu == "تسجيل طلب جديد (فاتورة متعددة الأصنا
                 st.session_state.last_saved_order = next_order_id
                 st.rerun()
 
-    # معاينة الفاتورة بعد الحفظ متضمنة كافة البيانات المطلوبة
+    # معاينة الفاتورة بعد الحفظ مباشرة مع أزرار متوافقة مع الأيباد (نسخ وتحميل كصورة)
     if 'last_saved_order' in st.session_state:
         saved_id = st.session_state.last_saved_order
         if saved_id in orders_df['Order_ID'].values:
@@ -457,6 +459,7 @@ elif menu == "تسجيل طلب جديد (فاتورة متعددة الأصنا
                 formatted_items_text = "- " + formatted_items_text
             barcode_str = f"<b>باركود الشحن:</b> {s_row.get('Cargo_Barcode', 'غير متوفر')}" if s_row.get('Cargo_Barcode') else ""
 
+            # ضبط اتجاه الأرقام والهاتف والتاريخ ليعرض بشكل صحيح تماماً
             receipt_html_snippet = f"""
             <!DOCTYPE html>
             <html dir="rtl" lang="ar">
@@ -471,9 +474,10 @@ elif menu == "تسجيل طلب جديد (فاتورة متعددة الأصنا
                     .info {{ font-size: 14px; color: #333; line-height: 1.6; }}
                     .items {{ font-size: 13px; color: #333; background: #f9f9f9; padding: 10px; border-radius: 6px; line-height: 1.6; margin: 10px 0; }}
                     .total {{ font-size: 16px; color: #007bff; font-weight: bold; text-align: center; margin-top: 10px; }}
-                    .btn-container {{ display: flex; gap: 10px; justify-content: center; margin-top: 15px; flex-wrap: wrap; max-width: 420px; margin-left: auto; margin-right: auto; }}
-                    .btn {{ padding: 10px 18px; border: none; border-radius: 6px; font-weight: bold; cursor: pointer; text-decoration: none; font-size: 14px; color: white; }}
+                    .btn-container {{ display: flex; gap: 8px; justify-content: center; margin-top: 15px; flex-wrap: wrap; max-width: 420px; margin-left: auto; margin-right: auto; }}
+                    .btn {{ padding: 10px 14px; border: none; border-radius: 6px; font-weight: bold; cursor: pointer; text-decoration: none; font-size: 13px; color: white; }}
                     .btn-copy {{ background-color: #007bff; }}
+                    .btn-download {{ background-color: #ff9800; }}
                     .btn-print {{ background-color: #28a745; }}
                     .toast {{ text-align: center; color: green; font-weight: bold; margin-top: 8px; font-size: 13px; }}
                 </style>
@@ -483,8 +487,8 @@ elif menu == "تسجيل طلب جديد (فاتورة متعددة الأصنا
                     <h3>=== لبانور - LubaNur ===</h3>
                     <div class="tagline">السيف والضياء للاستثمار الدولي</div>
                     <div class="info">
-                        <p><b>رقم الفاتورة:</b> #{s_row['Order_ID']} &nbsp;|&nbsp; <b>التاريخ:</b> {s_row['Date']}</p>
-                        <p><b>العميل:</b> {s_row['Customer']} &nbsp;|&nbsp; <b>الهاتف:</b> {s_row['Phone']}</p>
+                        <p><b>رقم الفاتورة:</b> #{s_row['Order_ID']} &nbsp;|&nbsp; <b>التاريخ:</b> <span style="direction: ltr; display: inline-block;">{s_row['Date']}</span></p>
+                        <p><b>العميل:</b> {s_row['Customer']} &nbsp;|&nbsp; <b>الهاتف:</b> <span style="direction: ltr; display: inline-block;">{s_row['Phone']}</span></p>
                         <p><b>المنطقة:</b> {s_row['Region']}</p>
                         <p><b>نوع التسليم:</b> {s_row.get('Delivery_Type', 'غير محدد')} &nbsp;|&nbsp; <b>شركة الشحن:</b> {s_row.get('Cargo_Company', 'غير محدد')}</p>
                         <p><b>حالة دفع الطلب:</b> {s_row.get('Order_Payment', 'لم يتم الدفع')} &nbsp;|&nbsp; <b>دفع الشحن:</b> {s_row.get('Shipping_Payment', 'لم يتم دفع الشحن')}</p>
@@ -503,7 +507,8 @@ elif menu == "تسجيل طلب جديد (فاتورة متعددة الأصنا
                 </div>
                 
                 <div class="btn-container">
-                    <button class="btn btn-copy" onclick="copyImage()">📋 نسخ الفاتورة كصورة (للصق بواتساب)</button>
+                    <button class="btn btn-copy" onclick="copyImage()">📋 نسخ الصورة</button>
+                    <button class="btn btn-download" onclick="downloadImage()">📥 تحميل كصورة</button>
                     <button class="btn btn-print" onclick="window.print()">🖨️ طباعة</button>
                 </div>
                 <div id="toast-msg" class="toast"></div>
@@ -517,63 +522,46 @@ elif menu == "تسجيل طلب جديد (فاتورة متعددة الأصنا
                                     navigator.clipboard.write([
                                         new ClipboardItem({{ 'image/png': blob }})
                                     ]).then(() => {{
-                                        document.getElementById('toast-msg').innerText = '✅ تم نسخ صورة الفاتورة بنجاح! يمكنك لصقها الآن في واتساب (Ctrl+V)';
+                                        document.getElementById('toast-msg').innerText = '✅ تم النسخ بنجاح!';
                                     }}).catch(err => {{
-                                        alert('تعذر النسخ التلقائي للحافظة: ' + err);
+                                        alert('استخدم زر "تحميل كصورة" أدناه للأجهزة اللوحية والأيباد.');
                                     }});
                                 }} catch(e) {{
-                                    alert('متصفحك لا يدعم النسخ المباشر للحافظة، يمكنك أخذ لقطة شاشة.');
+                                    alert('استخدم زر "تحميل كصورة" أدناه للأجهزة اللوحية والأيباد.');
                                 }});
                             }});
+                        }});
+                    }}
+                    function downloadImage() {{
+                        const el = document.getElementById('receipt-capture');
+                        html2canvas(el, {{ scale: 2, useCORS: true, scrollY: -window.scrollY }}).then(canvas => {{
+                            const link = document.createElement('a');
+                            link.download = 'Invoice_#{s_row["Order_ID"]}.png';
+                            link.href = canvas.toDataURL('image/png');
+                            link.click();
+                            document.getElementById('toast-msg').innerText = '✅ تم تحميل صورة الفاتورة لجهازك!';
                         }});
                     }}
                 </script>
             </body>
             </html>
             """
-            st.components.v1.html(receipt_html_snippet, height=720)
-
-elif menu == "الطلبات التي لم يتم تحضيرها (Pending Preparation)":
-    st.header("⏳ متابعة الطلبات قيد التحضير")
-    orders_df, stock_df, expenses_df, _ = load_data()
-    pending_df = orders_df[orders_df['Delivery_Status'] == 'قيد التحضير']
-    if not pending_df.empty:
-        st.dataframe(pending_df[['Order_ID', 'Date', 'Customer', 'Phone', 'Region', 'Cargo_Company', 'Items_Detail']], use_container_width=True)
-        up_pend_id = st.selectbox("اختر رقم الطلب لتحويله", pending_df['Order_ID'].tolist())
-        new_pend_status = st.selectbox("الحالة الجديدة", ["قيد التحضير", "تم التسليم لشركة الشحن", "جاري التوصيل", "تم تسليم العميل", "لم يتم التوصيل", "مرتجع"])
-        
-        cargo_barcode_input = ""
-        if new_pend_status == "تم التسليم لشركة الشحن":
-            cargo_barcode_input = st.text_input("📦 أدخل باركود / رقم بوليصة شركة الشحن")
-            
-        if st.button("💾 تحديث حالة الطلب"):
-            orders_df.loc[orders_df['Order_ID'] == up_pend_id, 'Delivery_Status'] = new_pend_status
-            if new_pend_status == "تم التسليم لشركة الشحن" and cargo_barcode_input:
-                orders_df.loc[orders_df['Order_ID'] == up_pend_id, 'Cargo_Barcode'] = cargo_barcode_input
-            
-            _, _, _, cargo_l_save = load_data()
-            cargo_df_save = pd.DataFrame({"Cargo_Name": cargo_l_save})
-            with pd.ExcelWriter(DB_FILE, engine='openpyxl') as writer:
-                orders_df.to_excel(writer, sheet_name="Orders", index=False)
-                stock_df.to_excel(writer, sheet_name="Stock", index=False)
-                expenses_df.to_excel(writer, sheet_name="Expenses", index=False)
-                cargo_df_save.to_excel(writer, sheet_name="Cargo_Companies", index=False)
-            st.cache_data.clear()
-            st.success("✅ تم التحديث بنجاح!")
-            st.rerun()
-    else:
-        st.success("🎉 لا توجد طلبيات قيد التحضير حالياً.")
+            st.components.v1.html(receipt_html_snippet, height=740)
 
 elif menu == "تتبع التوصيل والشحن":
-    st.header("🚚 متابعة التوصيل والشحن وتفاصيل الطلبات")
+    st.header("🚚 تتبع التوصيل والشحن (وتجهيز وتحصيل الطلبات)")
     orders_df, stock_df, expenses_df, cargo_companies_list = load_data()
     
     if not orders_df.empty:
         st.markdown("### 🔎 خيارات البحث والتصفية المتقدمة:")
-        filter_type = st.selectbox("بحث بواسطة:", ["عرض كافة الطلبات", "باركود شركة الشحن", "اسم العميل", "رقم الهاتف", "تاريخ الطلب", "شركة الشحن"])
+        filter_type = st.selectbox("بحث بواسطة:", ["عرض كافة الطلبات", "الطلبات قيد التحضير فقط", "الطلبات قيد التحصيل المالي فقط", "باركود شركة الشحن", "اسم العميل", "رقم الهاتف", "تاريخ الطلب", "شركة الشحن"])
         
         display_df = orders_df.copy()
-        if filter_type != "عرض كافة الطلبات":
+        if filter_type == "الطلبات قيد التحضير فقط":
+            display_df = orders_df[orders_df['Delivery_Status'] == 'قيد التحضير']
+        elif filter_type == "الطلبات قيد التحصيل المالي فقط":
+            display_df = orders_df[orders_df['Collection_Status'] == 'قيد التحصيل']
+        elif filter_type != "عرض كافة الطلبات":
             if filter_type == "تاريخ الطلب":
                 search_input = str(st.date_input("اختر التاريخ للتصفية", datetime.date.today()))
             elif filter_type == "شركة الشحن":
@@ -597,7 +585,7 @@ elif menu == "تتبع التوصيل والشحن":
         st.dataframe(display_df[['Order_ID', 'Date', 'Customer', 'Phone', 'Region', 'Cargo_Company', 'Cargo_Barcode', 'Delivery_Status', 'Collection_Status']], use_container_width=True)
         
         st.markdown("---")
-        st.subheader("📋 معاينة وتعديل تفاصيل الطلب المحدد:")
+        st.subheader("📋 معاينة وتعديل تفاصيل وحالات الطلب المحدد:")
         sel_order_id = st.selectbox("اختر رقم الطلب لعرض وتعديل تفاصيله:", display_df['Order_ID'].tolist() if not display_df.empty else orders_df['Order_ID'].tolist())
         
         if sel_order_id:
@@ -625,7 +613,7 @@ elif menu == "تتبع التوصيل والشحن":
                 st.write(curr_row['Items_Detail'])
             
             st.markdown("---")
-            st.subheader("✏️ تعديل حالات الطلب والشحن والتحصيل:")
+            st.subheader("✏️ تعديل حالات التوصيل والشحن والتحصيل المالي:")
             
             with st.form(f"update_order_card_{sel_order_id}"):
                 c_up1, c_up2, c_up3, c_up4 = st.columns(4)
@@ -652,7 +640,7 @@ elif menu == "تتبع التوصيل والشحن":
                 
                 new_barcode = st.text_input("تعديل باركود شركة الشحن", value=str(curr_row.get('Cargo_Barcode', '')))
                 
-                if st.form_submit_button("💾 حفظ تعديلات هذا الطلب"):
+                if st.form_submit_button("💾 حفظ تعديلات هذا الطلب وتحديث التحصيل"):
                     orders_df.loc[row_idx, 'Delivery_Status'] = new_d_stat
                     orders_df.loc[row_idx, 'Order_Payment'] = new_o_pay
                     orders_df.loc[row_idx, 'Shipping_Payment'] = new_s_pay
@@ -792,31 +780,25 @@ elif menu == "📅 تقرير الطلبات للفترة مع الأصناف":
 
 elif menu == "📊 التعديل الجماعي الشامل (شيت إكسيل)":
     st.header("📊 التعديل الجماعي الفوري للطلبات (شيت إكسيل تفاعلي)")
-    st.markdown("💡 يمكنك تعديل بيانات أي عدد من الطلبات مباشرة في الجدول أدناه (مثل اسم العميل، الهاتف، باركود الشحن، الشركات، وقيمة المنتجات)، ثم النقر على زر **حفظ جميع التعديلات** ليتم حفظها دفعة واحدة!")
-    
     orders_df, stock_df, expenses_df, cargo_companies_list = load_data()
-    
     if not orders_df.empty:
         edited_orders_df = st.data_editor(orders_df, num_rows="dynamic", use_container_width=True, key="batch_order_editor")
-        
         if st.button("💾 حفظ جميع التعديلات دفعة واحدة"):
             try:
                 edited_orders_df['Total'] = pd.to_numeric(edited_orders_df['Products_Total'], errors='coerce').fillna(0) + pd.to_numeric(edited_orders_df['Shipping_Price'], errors='coerce').fillna(0)
-                
                 cargo_df_save = pd.DataFrame({"Cargo_Name": cargo_companies_list})
                 with pd.ExcelWriter(DB_FILE, engine='openpyxl') as writer:
                     edited_orders_df.to_excel(writer, sheet_name="Orders", index=False)
                     stock_df.to_excel(writer, sheet_name="Stock", index=False)
                     expenses_df.to_excel(writer, sheet_name="Expenses", index=False)
                     cargo_df_save.to_excel(writer, sheet_name="Cargo_Companies", index=False)
-                
                 st.cache_data.clear()
                 st.success("🎉 تم حفظ جميع التعديلات وتحديث قاعدة البيانات بنجاح!")
                 st.rerun()
             except Exception as e:
-                st.error(f"❌ حدث خطأ أثناء حفظ التعديلات: {e}")
+                st.error(f"❌ حدث خطأ: {e}")
     else:
-        st.info("لا توجد طلبيات مسجلة في النظام بعد.")
+        st.info("لا توجد طلبيات.")
 
 elif menu == "فاتورة العميل (Compact Receipt)":
     st.header("🖨️ فاتورة العميل (معاينة فورية وطباعة ونسخ كصورة لصق في واتساب)")
@@ -855,9 +837,10 @@ elif menu == "فاتورة العميل (Compact Receipt)":
                     .info {{ font-size: 14px; color: #333; line-height: 1.6; }}
                     .items {{ font-size: 13px; color: #333; background: #f9f9f9; padding: 10px; border-radius: 6px; line-height: 1.6; margin: 10px 0; }}
                     .total {{ font-size: 16px; color: #007bff; font-weight: bold; text-align: center; margin-top: 10px; }}
-                    .btn-container {{ display: flex; gap: 10px; justify-content: center; margin-top: 15px; flex-wrap: wrap; max-width: 420px; margin-left: auto; margin-right: auto; }}
-                    .btn {{ padding: 10px 18px; border: none; border-radius: 6px; font-weight: bold; cursor: pointer; text-decoration: none; font-size: 14px; color: white; }}
+                    .btn-container {{ display: flex; gap: 8px; justify-content: center; margin-top: 15px; flex-wrap: wrap; max-width: 420px; margin-left: auto; margin-right: auto; }}
+                    .btn {{ padding: 10px 14px; border: none; border-radius: 6px; font-weight: bold; cursor: pointer; text-decoration: none; font-size: 13px; color: white; }}
                     .btn-copy {{ background-color: #007bff; }}
+                    .btn-download {{ background-color: #ff9800; }}
                     .btn-print {{ background-color: #28a745; }}
                     .toast {{ text-align: center; color: green; font-weight: bold; margin-top: 8px; font-size: 13px; }}
                 </style>
@@ -867,8 +850,8 @@ elif menu == "فاتورة العميل (Compact Receipt)":
                     <h3>=== لبانور - LubaNur ===</h3>
                     <div class="tagline">السيف والضياء للاستثمار الدولي</div>
                     <div class="info">
-                        <p><b>رقم الفاتورة:</b> #{order_row['Order_ID']} &nbsp;|&nbsp; <b>التاريخ:</b> {order_row['Date']}</p>
-                        <p><b>العميل:</b> {order_row['Customer']} &nbsp;|&nbsp; <b>الهاتف:</b> {order_row['Phone']}</p>
+                        <p><b>رقم الفاتورة:</b> #{order_row['Order_ID']} &nbsp;|&nbsp; <b>التاريخ:</b> <span style="direction: ltr; display: inline-block;">{order_row['Date']}</span></p>
+                        <p><b>العميل:</b> {order_row['Customer']} &nbsp;|&nbsp; <b>الهاتف:</b> <span style="direction: ltr; display: inline-block;">{order_row['Phone']}</span></p>
                         <p><b>المنطقة:</b> {order_row['Region']}</p>
                         <p><b>نوع التسليم:</b> {order_row.get('Delivery_Type', 'غير محدد')} &nbsp;|&nbsp; <b>شركة الشحن:</b> {order_row.get('Cargo_Company', 'غير محدد')}</p>
                         <p><b>حالة دفع الطلب:</b> {order_row.get('Order_Payment', 'لم يتم الدفع')} &nbsp;|&nbsp; <b>دفع الشحن:</b> {order_row.get('Shipping_Payment', 'لم يتم دفع الشحن')}</p>
@@ -887,7 +870,8 @@ elif menu == "فاتورة العميل (Compact Receipt)":
                 </div>
                 
                 <div class="btn-container">
-                    <button class="btn btn-copy" onclick="copyImage()">📋 نسخ الفاتورة كصورة (للصق بواتساب)</button>
+                    <button class="btn btn-copy" onclick="copyImage()">📋 نسخ الصورة</button>
+                    <button class="btn btn-download" onclick="downloadImage()">📥 تحميل كصورة</button>
                     <button class="btn btn-print" onclick="window.print()">🖨️ طباعة</button>
                 </div>
                 <div id="toast-msg" class="toast"></div>
@@ -901,21 +885,31 @@ elif menu == "فاتورة العميل (Compact Receipt)":
                                     navigator.clipboard.write([
                                         new ClipboardItem({{ 'image/png': blob }})
                                     ]).then(() => {{
-                                        document.getElementById('toast-msg').innerText = '✅ تم نسخ صورة الفاتورة بنجاح! يمكنك لصقها الآن في واتساب (Ctrl+V)';
+                                        document.getElementById('toast-msg').innerText = '✅ تم النسخ بنجاح!';
                                     }}).catch(err => {{
-                                        alert('تعذر النسخ التلقائي للحافظة: ' + err);
+                                        alert('استخدم زر "تحميل كصورة" أدناه للأجهزة اللوحية والأيباد.');
                                     }});
                                 }} catch(e) {{
-                                    alert('متصفحك لا يدعم النسخ المباشر للحافظة، يمكنك أخذ لقطة شاشة.');
+                                    alert('استخدم زر "تحميل كصورة" أدناه للأجهزة اللوحية والأيباد.');
                                 }});
                             }});
+                        }});
+                    }}
+                    function downloadImage() {{
+                        const el = document.getElementById('receipt-capture');
+                        html2canvas(el, {{ scale: 2, useCORS: true, scrollY: -window.scrollY }}).then(canvas => {{
+                            const link = document.createElement('a');
+                            link.download = 'Invoice_#{order_row["Order_ID"]}.png';
+                            link.href = canvas.toDataURL('image/png');
+                            link.click();
+                            document.getElementById('toast-msg').innerText = '✅ تم تحميل صورة الفاتورة لجهازك!';
                         }});
                     }}
                 </script>
             </body>
             </html>
             """
-            st.components.v1.html(receipt_html_snippet, height=720)
+            st.components.v1.html(receipt_html_snippet, height=740)
         else:
             st.warning("لا توجد فواتير مسجلة في تاريخ اليوم المحدد.")
 
@@ -1055,26 +1049,3 @@ elif menu == "📑 تقرير الشحن لشركة الشحن (تقرير ال�
         selected_cargo = st.selectbox("اختر شركة الشحن", cargo_companies_list)
         filtered_df = orders_df[orders_df['Cargo_Company'] == selected_cargo]
         st.dataframe(filtered_df[['Order_ID', 'Date', 'Customer', 'Phone', 'Region', 'Cargo_Barcode', 'Products_Total', 'Shipping_Price', 'Total', 'Bags']], use_container_width=True)
-
-elif menu == "💵 متابعة التحصيل المالي":
-    st.header("💵 متابعة التحصيل المالي")
-    orders_df, stock_df, expenses_df, cargo_companies_list = load_data()
-    if not orders_df.empty:
-        st.dataframe(orders_df[['Order_ID', 'Date', 'Customer', 'Phone', 'Cargo_Company', 'Cargo_Barcode', 'Products_Total', 'Collection_Status']], use_container_width=True)
-        pending_coll = orders_df[orders_df['Collection_Status'] == 'قيد التحصيل']
-        if not pending_coll.empty:
-            sel_coll_id = st.selectbox("اختر رقم الطلب لتحصيله", pending_coll['Order_ID'].tolist())
-            if st.button("💾 تحويل إلى 'مدفوع بالكامل'"):
-                orders_df.loc[orders_df['Order_ID'] == sel_coll_id, 'Collection_Status'] = "مدفوع بالكامل"
-                orders_df.loc[orders_df['Order_ID'] == sel_coll_id, 'Order_Payment'] = "تم الدفع"
-                orders_df.loc[orders_df['Order_ID'] == sel_coll_id, 'Shipping_Payment'] = "تم دفع الشحن"
-                
-                cargo_df_save = pd.DataFrame({"Cargo_Name": cargo_companies_list})
-                with pd.ExcelWriter(DB_FILE, engine='openpyxl') as writer:
-                    orders_df.to_excel(writer, sheet_name="Orders", index=False)
-                    stock_df.to_excel(writer, sheet_name="Stock", index=False)
-                    expenses_df.to_excel(writer, sheet_name="Expenses", index=False)
-                    cargo_df_save.to_excel(writer, sheet_name="Cargo_Companies", index=False)
-                st.cache_data.clear()
-                st.success("✅ تم تحديث التحصيل بنجاح!")
-                st.rerun()
