@@ -239,7 +239,7 @@ def load_data():
 orders_df, stock_df, expenses_df, cargo_companies_list = load_data()
 
 st.sidebar.markdown('<p class="sidebar-title">🌟 لبانور - لوحة التحكم الإدارية</p>', unsafe_allow_html=True)
-st.sidebar.markdown('<p class="version-tag">📌 الإصدار: v10:00am 27-10-2026</p>', unsafe_allow_html=True)
+st.sidebar.markdown('<p class="version-tag">📌 الإصدار النهائي: v11:00am 27-10-2026</p>', unsafe_allow_html=True)
 
 if st.sidebar.button("🔄 تحديث البيانات مع السيرفر"):
     st.cache_data.clear()
@@ -377,7 +377,6 @@ elif menu == "تسجيل طلب جديد (فاتورة متعددة الأصنا
     st.markdown("---")
     st.subheader("2️⃣ إضافة منتجات الفاتورة (مع عرض المخزون الحالي)")
     
-    # عرض المخزون المصغر لتسهيل المتابعة أثناء الطلب
     with st.expander("📦 عرض رصيد المخزون الحالي لكل الأصناف"):
         st.dataframe(stock_df, use_container_width=True)
 
@@ -445,7 +444,6 @@ elif menu == "تسجيل طلب جديد (فاتورة متعددة الأصنا
                 st.session_state.last_saved_order = next_order_id
                 st.rerun()
 
-    # معاينة الفاتورة بعد الحفظ مباشرة مع أزرار متوافقة مع الأيباد (نسخ وتحميل كصورة)
     if 'last_saved_order' in st.session_state:
         saved_id = st.session_state.last_saved_order
         if saved_id in orders_df['Order_ID'].values:
@@ -459,7 +457,6 @@ elif menu == "تسجيل طلب جديد (فاتورة متعددة الأصنا
                 formatted_items_text = "- " + formatted_items_text
             barcode_str = f"<b>باركود الشحن:</b> {s_row.get('Cargo_Barcode', 'غير متوفر')}" if s_row.get('Cargo_Barcode') else ""
 
-            # ضبط اتجاه الأرقام والهاتف والتاريخ ليعرض بشكل صحيح تماماً
             receipt_html_snippet = f"""
             <!DOCTYPE html>
             <html dir="rtl" lang="ar">
@@ -729,7 +726,7 @@ elif menu == "📦 إدارة المخزون والجرد":
 
 elif menu == "🚚 إدارة شركات الشحن":
     st.header("🚚 إدارة وإضافة شركات الشحن")
-    _, stock_df, expenses_df, cargo_companies_list = load_data()
+    orders_df, stock_df, expenses_df, cargo_companies_list = load_data()
     
     st.subheader("الشركات الحالية في النظام:")
     st.write(cargo_companies_list)
@@ -756,6 +753,16 @@ elif menu == "🚚 إدارة شركات الشحن":
                 st.rerun()
             else:
                 st.error("الاسم فارغ أو موجود مسبقاً.")
+
+elif menu == "📑 تقرير الشحن لشركة الشحن (تقرير الاستلام)":
+    st.header("📑 تقرير تسليم الشحنات لشركات الشحن")
+    orders_df, _, _, cargo_companies_list = load_data()
+    if not orders_df.empty:
+        selected_cargo = st.selectbox("اختر شركة الشحن", cargo_companies_list)
+        filtered_df = orders_df[orders_df['Cargo_Company'] == selected_cargo]
+        st.dataframe(filtered_df[['Order_ID', 'Date', 'Customer', 'Phone', 'Region', 'Cargo_Barcode', 'Products_Total', 'Shipping_Price', 'Total', 'Bags']], use_container_width=True)
+    else:
+        st.info("لا توجد طلبيات مسجلة في النظام بعد.")
 
 elif menu == "📅 تقرير الطلبات للفترة مع الأصناف":
     st.header("📅 تقرير الطلبات للفترة مع الأصناف")
@@ -989,6 +996,8 @@ elif menu == "تعديل وحذف الفواتير (Edit & Delete)":
             st.cache_data.clear()
             st.success("🗑️ تم حذف الفاتورة بنجاح!")
             st.rerun()
+    else:
+        st.info("لا توجد طلبيات مسجلة في النظام بعد.")
 
 elif menu == "إدارة المصروفات (Expenses)":
     st.header("💸 إدارة المصروفات")
@@ -1041,11 +1050,3 @@ elif menu == "🚨 طلب توريد المخزون الحرِج":
         st.dataframe(critical_stock, use_container_width=True)
     else:
         st.success("🎉 ممتاز! جميع المخزونات في مستويات آمنة.")
-
-elif menu == "📑 تقرير الشحن لشركة الشحن (تقرير الاستلام)":
-    st.header("📑 تقرير تسليم الشحنات لشركات الشحن")
-    orders_df, _, _, cargo_companies_list = load_data()
-    if not orders_df.empty:
-        selected_cargo = st.selectbox("اختر شركة الشحن", cargo_companies_list)
-        filtered_df = orders_df[orders_df['Cargo_Company'] == selected_cargo]
-        st.dataframe(filtered_df[['Order_ID', 'Date', 'Customer', 'Phone', 'Region', 'Cargo_Barcode', 'Products_Total', 'Shipping_Price', 'Total', 'Bags']], use_container_width=True)
