@@ -145,8 +145,8 @@ def normalize_orders_df(orders):
     expected_defaults = {
         "Order_ID": 0, "Date": "غير محدد", "Customer": "غير محدد", "Phone": "غير محدد", 
         "Region": "غير محدد", "Items_Detail": "غير محدد", "Products_Total": 0.0, 
-        "Shipping_Price": 0.0, "Total": 0.0, "Order_Payment": "اختر الحالة", 
-        "Shipping_Payment": "اختر الحالة", "Cargo_Company": "وصل لي", 
+        "Shipping_Price": 0.0, "Total": 0.0, "Order_Payment": "لم يتم الدفع", 
+        "Shipping_Payment": "لم يتم دفع الشحن", "Cargo_Company": "وصل لي", 
         "Delivery_Type": "من المكتب (Pickup)", "Delivery_Status": "قيد التحضير", 
         "Collection_Status": "قيد التحصيل", "Bags": 1, "Cargo_Barcode": ""
     }
@@ -239,7 +239,7 @@ def load_data():
 orders_df, stock_df, expenses_df, cargo_companies_list = load_data()
 
 st.sidebar.markdown('<p class="sidebar-title">🌟 لبانور - لوحة التحكم الإدارية</p>', unsafe_allow_html=True)
-st.sidebar.markdown('<p class="version-tag">📌 الإصدار: v8:00am 27-10-2026</p>', unsafe_allow_html=True)
+st.sidebar.markdown('<p class="version-tag">📌 الإصدار: v9:00am 27-10-2026</p>', unsafe_allow_html=True)
 
 if st.sidebar.button("🔄 تحديث البيانات مع السيرفر"):
     st.cache_data.clear()
@@ -372,8 +372,9 @@ elif menu == "تسجيل طلب جديد (فاتورة متعددة الأصنا
         delivery_type = st.selectbox("نوع التسليم (Delivery Type)", ["من المكتب (Pickup)", "إلى المنزل (Home Delivery)"], key="new_dtype")
     with col_inf3:
         shipping_price = st.number_input("سعر الشحن (Shipping Price OMR)", min_value=0.0, value=1.0, key="new_ship_price")
-        order_payment = st.selectbox("حالة دفع الطلب (Order Payment Status)", ["اختر الحالة", "تم الدفع", "لم يتم الدفع (COD)", "لم يتم الدفع"], key="new_ord_pay")
-        shipping_payment = st.selectbox("حالة دفع قيمة الشحن (Shipping Payment Status)", ["اختر الحالة", "تم دفع الشحن", "لم يتم دفع الشحن"], key="new_shp_pay")
+        # القيمة التلقائية "لم يتم الدفع" وإزالة الخيار المكرر
+        order_payment = st.selectbox("حالة دفع الطلب (Order Payment Status)", ["لم يتم الدفع", "تم الدفع"], key="new_ord_pay")
+        shipping_payment = st.selectbox("حالة دفع قيمة الشحن (Shipping Payment Status)", ["لم يتم دفع الشحن", "تم دفع الشحن"], key="new_shp_pay")
         bags = st.number_input("عدد الأكياس (Bags)", min_value=0, value=1, key="new_bags")
 
     st.markdown("---")
@@ -407,8 +408,6 @@ elif menu == "تسجيل طلب جديد (فاتورة متعددة الأصنا
         if st.button("✅ حفظ واعتماد الطلب نهائياً وخصم المخزون"):
             if not cust_name:
                 st.error("الرجاء إدخال اسم العميل.")
-            elif order_payment == "اختر الحالة" or shipping_payment == "اختر الحالة":
-                st.error("الرجاء تحديد حالات الدفع والشحن بدقة.")
             else:
                 items_summary_list = [f"{r['Item']} (الكمية: {r['Qty']})" for r in st.session_state.cart]
                 items_detail_str = " | ".join(items_summary_list)
@@ -444,6 +443,7 @@ elif menu == "تسجيل طلب جديد (فاتورة متعددة الأصنا
                 st.session_state.last_saved_order = next_order_id
                 st.rerun()
 
+    # معاينة الفاتورة بعد الحفظ متضمنة كافة البيانات المطلوبة
     if 'last_saved_order' in st.session_state:
         saved_id = st.session_state.last_saved_order
         if saved_id in orders_df['Order_ID'].values:
@@ -486,6 +486,8 @@ elif menu == "تسجيل طلب جديد (فاتورة متعددة الأصنا
                         <p><b>رقم الفاتورة:</b> #{s_row['Order_ID']} &nbsp;|&nbsp; <b>التاريخ:</b> {s_row['Date']}</p>
                         <p><b>العميل:</b> {s_row['Customer']} &nbsp;|&nbsp; <b>الهاتف:</b> {s_row['Phone']}</p>
                         <p><b>المنطقة:</b> {s_row['Region']}</p>
+                        <p><b>نوع التسليم:</b> {s_row.get('Delivery_Type', 'غير محدد')} &nbsp;|&nbsp; <b>شركة الشحن:</b> {s_row.get('Cargo_Company', 'غير محدد')}</p>
+                        <p><b>حالة دفع الطلب:</b> {s_row.get('Order_Payment', 'لم يتم الدفع')} &nbsp;|&nbsp; <b>دفع الشحن:</b> {s_row.get('Shipping_Payment', 'لم يتم دفع الشحن')}</p>
                         <p>{barcode_str}</p>
                     </div>
                     <hr style="border: 0.5px dashed #ccc;">
@@ -633,13 +635,13 @@ elif menu == "تتبع التوصيل والشحن":
                 d_idx = delivery_status_list.index(cur_d_stat) if cur_d_stat in delivery_status_list else 0
                 new_d_stat = c_up1.selectbox("حالة التوصيل", delivery_status_list, index=d_idx)
                 
-                ord_pay_list = ["اختر الحالة", "تم الدفع", "لم يتم الدفع (COD)", "لم يتم الدفع"]
-                cur_o_pay = str(curr_row.get('Order_Payment', 'اختر الحالة'))
+                ord_pay_list = ["لم يتم الدفع", "تم الدفع"]
+                cur_o_pay = str(curr_row.get('Order_Payment', 'لم يتم الدفع'))
                 o_idx = ord_pay_list.index(cur_o_pay) if cur_o_pay in ord_pay_list else 0
                 new_o_pay = c_up2.selectbox("حالة دفع الطلب", ord_pay_list, index=o_idx)
                 
-                shp_pay_list = ["اختر الحالة", "تم دفع الشحن", "لم يتم دفع الشحن"]
-                cur_s_pay = str(curr_row.get('Shipping_Payment', 'اختر الحالة'))
+                shp_pay_list = ["لم يتم دفع الشحن", "تم دفع الشحن"]
+                cur_s_pay = str(curr_row.get('Shipping_Payment', 'لم يتم دفع الشحن'))
                 s_idx = shp_pay_list.index(cur_s_pay) if cur_s_pay in shp_pay_list else 0
                 new_s_pay = c_up3.selectbox("حالة دفع الشحن", shp_pay_list, index=s_idx)
                 
@@ -868,6 +870,8 @@ elif menu == "فاتورة العميل (Compact Receipt)":
                         <p><b>رقم الفاتورة:</b> #{order_row['Order_ID']} &nbsp;|&nbsp; <b>التاريخ:</b> {order_row['Date']}</p>
                         <p><b>العميل:</b> {order_row['Customer']} &nbsp;|&nbsp; <b>الهاتف:</b> {order_row['Phone']}</p>
                         <p><b>المنطقة:</b> {order_row['Region']}</p>
+                        <p><b>نوع التسليم:</b> {order_row.get('Delivery_Type', 'غير محدد')} &nbsp;|&nbsp; <b>شركة الشحن:</b> {order_row.get('Cargo_Company', 'غير محدد')}</p>
+                        <p><b>حالة دفع الطلب:</b> {order_row.get('Order_Payment', 'لم يتم الدفع')} &nbsp;|&nbsp; <b>دفع الشحن:</b> {order_row.get('Shipping_Payment', 'لم يتم دفع الشحن')}</p>
                         <p>{barcode_str}</p>
                     </div>
                     <hr style="border: 0.5px dashed #ccc;">
@@ -938,14 +942,14 @@ elif menu == "تعديل وحذف الفواتير (Edit & Delete)":
             e_ship_p = st.number_input("سعر الشحن", value=float(target_row['Shipping_Price']))
             e_barcode = st.text_input("باركود شركة الشحن", value=str(target_row.get('Cargo_Barcode', '')))
             
-            cur_ord_pay = str(target_row.get('Order_Payment', 'اختر الحالة'))
-            cur_shp_pay = str(target_row.get('Shipping_Payment', 'اختر الحالة'))
+            cur_ord_pay = str(target_row.get('Order_Payment', 'لم يتم الدفع'))
+            cur_shp_pay = str(target_row.get('Shipping_Payment', 'لم يتم دفع الشحن'))
             
-            ord_pay_list = ["اختر الحالة", "تم الدفع", "لم يتم الدفع (COD)", "لم يتم الدفع"]
+            ord_pay_list = ["لم يتم الدفع", "تم الدفع"]
             o_idx = ord_pay_list.index(cur_ord_pay) if cur_ord_pay in ord_pay_list else 0
             e_ord_pay = st.selectbox("حالة دفع الطلب", ord_pay_list, index=o_idx)
             
-            shp_pay_list = ["اختر الحالة", "تم دفع الشحن", "لم يتم دفع الشحن"]
+            shp_pay_list = ["لم يتم دفع الشحن", "تم دفع الشحن"]
             s_idx = shp_pay_list.index(cur_shp_pay) if cur_shp_pay in shp_pay_list else 0
             e_shp_pay = st.selectbox("حالة دفع قيمة الشحن", shp_pay_list, index=s_idx)
             
