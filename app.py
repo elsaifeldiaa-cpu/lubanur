@@ -239,7 +239,7 @@ def load_data():
 orders_df, stock_df, expenses_df, cargo_companies_list = load_data()
 
 st.sidebar.markdown('<p class="sidebar-title">🌟 لبانور - لوحة التحكم الإدارية</p>', unsafe_allow_html=True)
-st.sidebar.markdown('<p class="version-tag">📌 الإصدار النهائي: v11:00am 27-10-2026</p>', unsafe_allow_html=True)
+st.sidebar.markdown('<p class="version-tag">📌 الإصدار النهائي المحدث: v12:00pm 27-10-2026</p>', unsafe_allow_html=True)
 
 if st.sidebar.button("🔄 تحديث البيانات مع السيرفر"):
     st.cache_data.clear()
@@ -247,18 +247,18 @@ if st.sidebar.button("🔄 تحديث البيانات مع السيرفر"):
     st.rerun()
 
 menu_options = {
-    "📊 اللوحة الرئيسية (Dashboard & Financials)": "اللوحة الرئيسية (Dashboard & Financials)",
-    "📝 تسجيل طلب جديد": "تسجيل طلب جديد (فاتورة متعددة الأصناف)",
-    "🚚 تتبع التوصيل والشحن (والطلبات قيد التحضير)": "تتبع التوصيل والشحن",
+    "📊 اللوحة الرئيسية": "اللوحة الرئيسية",
+    "📝 تسجيل طلب جديد": "تسجيل طلب جديد",
+    "🚚 تتبع التوصيل والشحن": "تتبع التوصيل والشحن",
     "📦 إدارة المخزون والجرد": "إدارة المخزون والجرد",
     "🚚 إدارة شركات الشحن": "إدارة شركات الشحن",
-    "📑 تقرير الشحن (شركات الشحن)": "تقرير الشحن لشركة الشحن (تقرير الاستلام)",
+    "📑 تقرير الشحن (شركات الشحن)": "تقرير الشحن",
     "📅 تقرير الطلبات للفترة مع الأصناف": "تقرير الطلبات للفترة مع الأصناف",
-    "📊 التعديل الجماعي الشامل (شيت إكسيل)": "📊 التعديل الجماعي الشامل (شيت إكسيل)",
-    "✏️ تعديل وحذف الفواتير": "تعديل وحذف الفواتير (Edit & Delete)",
-    "🖨️ فاتورة العميل (Compact)": "فاتورة العميل (Compact Receipt)",
-    "💸 إدارة المصروفات": "إدارة المصروفات (Expenses)",
-    "📈 التقرير المالي التفصيلي": "التقرير المالي التفصيلي (Financial Report)",
+    "📊 التعديل الجماعي الشامل (شيت إكسيل)": "التعديل الجماعي الشامل",
+    "✏️ تعديل وحذف الفواتير": "تعديل وحذف الفواتير",
+    "🖨️ فاتورة العميل": "فاتورة العميل",
+    "💸 إدارة المصروفات": "إدارة المصروفات",
+    "📈 التقرير المالي التفصيلي": "التقرير المالي التفصيلي",
     "🚨 طلب توريد المخزون الحرِج": "طلب توريد المخزون الحرِج"
 }
 
@@ -327,7 +327,7 @@ def get_cargo_summary_df(orders_df):
         
     return pd.DataFrame(summary_list)
 
-if menu == "اللوحة الرئيسية (Dashboard & Financials)":
+if menu == "اللوحة الرئيسية":
     st.header("📊 الملخص التشغيلي والمالي الشامل")
     orders_df, stock_df, expenses_df, _ = load_data()
     
@@ -348,7 +348,7 @@ if menu == "اللوحة الرئيسية (Dashboard & Financials)":
     if not cargo_summary.empty:
         st.dataframe(cargo_summary, use_container_width=True)
 
-elif menu == "تسجيل طلب جديد (فاتورة متعددة الأصناف)":
+elif menu == "تسجيل طلب جديد":
     st.header("📝 إنشاء فاتورة جديدة (إضافة عدة منتجات في نفس الطلب)")
     orders_df, stock_df, expenses_df, cargo_companies_list = load_data()
 
@@ -657,7 +657,7 @@ elif menu == "تتبع التوصيل والشحن":
     else:
         st.info("لا توجد طلبيات مسجلة في النظام بعد.")
 
-elif menu == "📦 إدارة المخزون والجرد":
+elif menu == "إدارة المخزون والجرد":
     st.header("📦 إدارة المخزون، تعزيز الأصناف وتسوية الجرد")
     orders_df, stock_df, expenses_df, cargo_companies_list = load_data()
     
@@ -724,7 +724,7 @@ elif menu == "📦 إدارة المخزون والجرد":
                 st.success("🎉 تمت تسوية المخزون واعتماد الجرد بنجاح!")
                 st.rerun()
 
-elif menu == "🚚 إدارة شركات الشحن":
+elif menu == "إدارة شركات الشحن":
     st.header("🚚 إدارة وإضافة شركات الشحن")
     orders_df, stock_df, expenses_df, cargo_companies_list = load_data()
     
@@ -754,7 +754,7 @@ elif menu == "🚚 إدارة شركات الشحن":
             else:
                 st.error("الاسم فارغ أو موجود مسبقاً.")
 
-elif menu == "📑 تقرير الشحن لشركة الشحن (تقرير الاستلام)":
+elif menu == "تقرير الشحن":
     st.header("📑 تقرير تسليم الشحنات لشركات الشحن")
     orders_df, _, _, cargo_companies_list = load_data()
     if not orders_df.empty:
@@ -764,7 +764,7 @@ elif menu == "📑 تقرير الشحن لشركة الشحن (تقرير ال�
     else:
         st.info("لا توجد طلبيات مسجلة في النظام بعد.")
 
-elif menu == "📅 تقرير الطلبات للفترة مع الأصناف":
+elif menu == "تقرير الطلبات للفترة مع الأصناف":
     st.header("📅 تقرير الطلبات للفترة مع الأصناف")
     orders_df, _, _, _ = load_data()
     if not orders_df.empty:
@@ -785,7 +785,7 @@ elif menu == "📅 تقرير الطلبات للفترة مع الأصناف":
     else:
         st.info("لا توجد طلبيات مسجلة في النظام بعد.")
 
-elif menu == "📊 التعديل الجماعي الشامل (شيت إكسيل)":
+elif menu == "التعديل الجماعي الشامل":
     st.header("📊 التعديل الجماعي الفوري للطلبات (شيت إكسيل تفاعلي)")
     orders_df, stock_df, expenses_df, cargo_companies_list = load_data()
     if not orders_df.empty:
@@ -807,7 +807,7 @@ elif menu == "📊 التعديل الجماعي الشامل (شيت إكسيل
     else:
         st.info("لا توجد طلبيات.")
 
-elif menu == "فاتورة العميل (Compact Receipt)":
+elif menu == "فاتورة العميل":
     st.header("🖨️ فاتورة العميل (معاينة فورية وطباعة ونسخ كصورة لصق في واتساب)")
     orders_df, _, _, _ = load_data()
     if not orders_df.empty:
@@ -920,8 +920,8 @@ elif menu == "فاتورة العميل (Compact Receipt)":
         else:
             st.warning("لا توجد فواتير مسجلة في تاريخ اليوم المحدد.")
 
-elif menu == "تعديل وحذف الفواتير (Edit & Delete)":
-    st.header("✏️ تعديل وحذف الفواتير وتعديل الأصناف والكميات")
+elif menu == "تعديل وحذف الفواتير":
+    st.header("✏️ تعديل وحذف الفواتير مع جدول الأصناف الاحترافي")
     orders_df, stock_df, expenses_df, cargo_companies_list = load_data()
     if not orders_df.empty:
         edit_order_id = st.selectbox("اختر رقم الطلب للتعديل", orders_df['Order_ID'].tolist())
@@ -954,11 +954,24 @@ elif menu == "تعديل وحذف الفواتير (Edit & Delete)":
             s_idx = shp_pay_list.index(cur_shp_pay) if cur_shp_pay in shp_pay_list else 0
             e_shp_pay = st.selectbox("حالة دفع قيمة الشحن", shp_pay_list, index=s_idx)
             
-            st.markdown("📦 **أصناف وفاتورة الطلب الحالية:**")
-            current_items_str = str(target_row['Items_Detail'])
-            e_items_detail = st.text_area("تعديل تفاصيل الأصناف والكميات يدوياً", value=current_items_str)
+            st.markdown("---")
+            st.markdown("📦 **جدول أصناف الفاتورة (إضافة، تعديل، أو حذف أصناف):**")
             
-            if st.form_submit_button("💾 حفظ التعديلات"):
+            # استخراج الأصناف الحالية في جدول تفاعلي
+            current_items_df = parse_items_to_df(target_row['Items_Detail'])
+            edited_items_df = st.data_editor(current_items_df, num_rows="dynamic", use_container_width=True, key=f"editor_items_{edit_order_id}")
+            
+            if st.form_submit_button("💾 حفظ تعديلات الفاتورة والأصناف"):
+                # إعادة بناء تفاصيل المنتجات من الجدول المحدث
+                updated_items_list = []
+                for _, row_it in edited_items_df.iterrows():
+                    iname = str(row_it.get('اسم المنتج', '')).strip()
+                    iqty = int(row_it.get('الكمية', 1))
+                    if iname:
+                        updated_items_list.append(f"{iname} (الكمية: {iqty})")
+                
+                new_items_detail_str = " | ".join(updated_items_list)
+                
                 orders_df.loc[orders_df['Order_ID'] == edit_order_id, 'Customer'] = e_cust
                 orders_df.loc[orders_df['Order_ID'] == edit_order_id, 'Phone'] = e_phone
                 orders_df.loc[orders_df['Order_ID'] == edit_order_id, 'Region'] = e_region
@@ -970,7 +983,7 @@ elif menu == "تعديل وحذف الفواتير (Edit & Delete)":
                 orders_df.loc[orders_df['Order_ID'] == edit_order_id, 'Cargo_Barcode'] = e_barcode
                 orders_df.loc[orders_df['Order_ID'] == edit_order_id, 'Order_Payment'] = e_ord_pay
                 orders_df.loc[orders_df['Order_ID'] == edit_order_id, 'Shipping_Payment'] = e_shp_pay
-                orders_df.loc[orders_df['Order_ID'] == edit_order_id, 'Items_Detail'] = e_items_detail
+                orders_df.loc[orders_df['Order_ID'] == edit_order_id, 'Items_Detail'] = new_items_detail_str
                 
                 new_coll_status = "مدفوع بالكامل" if (e_ord_pay == "تم الدفع" and e_shp_pay == "تم دفع الشحن") else "قيد التحصيل"
                 orders_df.loc[orders_df['Order_ID'] == edit_order_id, 'Collection_Status'] = new_coll_status
@@ -982,7 +995,7 @@ elif menu == "تعديل وحذف الفواتير (Edit & Delete)":
                     expenses_df.to_excel(writer, sheet_name="Expenses", index=False)
                     cargo_df_save.to_excel(writer, sheet_name="Cargo_Companies", index=False)
                 st.cache_data.clear()
-                st.success("✅ تم التعديل وحفظ البيانات بنجاح!")
+                st.success("✅ تم تعديل الفاتورة والأصناف وحفظ البيانات بنجاح!")
                 st.rerun()
                 
         if st.button("🗑️ حذف الفاتورة بالكامل"):
@@ -999,7 +1012,7 @@ elif menu == "تعديل وحذف الفواتير (Edit & Delete)":
     else:
         st.info("لا توجد طلبيات مسجلة في النظام بعد.")
 
-elif menu == "إدارة المصروفات (Expenses)":
+elif menu == "إدارة المصروفات":
     st.header("💸 إدارة المصروفات")
     orders_df, stock_df, expenses_df, cargo_companies_list = load_data()
     with st.form("add_expense_form"):
@@ -1023,7 +1036,7 @@ elif menu == "إدارة المصروفات (Expenses)":
     if not expenses_df.empty:
         st.dataframe(expenses_df, use_container_width=True)
 
-elif menu == "📈 التقرير المالي التفصيلي (Financial Report)":
+elif menu == "التقرير المالي التفصيلي":
     st.header("📈 التقرير المالي التفصيلي والشامل")
     orders_df, stock_df, expenses_df, _ = load_data()
     total_products_value = orders_df['Products_Total'].sum() if not orders_df.empty else 0.0
@@ -1042,7 +1055,7 @@ elif menu == "📈 التقرير المالي التفصيلي (Financial Repor
     if not cargo_summary.empty:
         st.dataframe(cargo_summary, use_container_width=True)
 
-elif menu == "🚨 طلب توريد المخزون الحرِج":
+elif menu == "طلب توريد المخزون الحرِج":
     st.header("🚨 طلب توريد المخزون الحرِج")
     _, stock_df, _, _ = load_data()
     critical_stock = stock_df[stock_df['Qty'] < 5].copy()
