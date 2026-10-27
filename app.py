@@ -239,7 +239,7 @@ def load_data():
 orders_df, stock_df, expenses_df, cargo_companies_list = load_data()
 
 st.sidebar.markdown('<p class="sidebar-title">🌟 لبانور - لوحة التحكم الإدارية</p>', unsafe_allow_html=True)
-st.sidebar.markdown('<p class="version-tag">📌 الإصدار: v7:00am 27-10-2026</p>', unsafe_allow_html=True)
+st.sidebar.markdown('<p class="version-tag">📌 الإصدار: v8:00am 27-10-2026</p>', unsafe_allow_html=True)
 
 if st.sidebar.button("🔄 تحديث البيانات مع السيرفر"):
     st.cache_data.clear()
@@ -357,7 +357,6 @@ elif menu == "تسجيل طلب جديد (فاتورة متعددة الأصنا
     if 'cart' not in st.session_state:
         st.session_state.cart = []
 
-    # حساب رقم الطلب الجديد تلقائياً وغير قابل للتعديل
     next_order_id = int(orders_df['Order_ID'].max() + 1) if not orders_df.empty and not pd.isna(orders_df['Order_ID'].max()) else 1
     st.info(f"🔢 **رقم الطلب الجديد (تلقائي):** #{next_order_id}")
 
@@ -423,7 +422,6 @@ elif menu == "تسجيل طلب جديد (فاتورة متعددة الأصنا
                     "Delivery_Status": "قيد التحضير", "Collection_Status": coll_status, "Bags": bags, "Cargo_Barcode": ""
                 }
                 
-                # خصم المخزون تلقائياً
                 for r in st.session_state.cart:
                     it_name = r['Item']
                     it_qty = r['Qty']
@@ -443,12 +441,9 @@ elif menu == "تسجيل طلب جديد (فاتورة متعددة الأصنا
                 st.session_state.cart = []
                 st.cache_data.clear()
                 st.success(f"🎉 تم حفظ الطلب رقم #{next_order_id} بنجاح وتم خصم المخزون تلقائياً!")
-                
-                # تخزين رقم آخر فاتورة لعرضها
                 st.session_state.last_saved_order = next_order_id
                 st.rerun()
 
-    # إظهار فاتورة آخر طلب تم حفظه بنفس تصميم فاتورة العميل مع أزرار الطباعة والنسخ كصورة
     if 'last_saved_order' in st.session_state:
         saved_id = st.session_state.last_saved_order
         if saved_id in orders_df['Order_ID'].values:
@@ -825,7 +820,6 @@ elif menu == "فاتورة العميل (Compact Receipt)":
     st.header("🖨️ فاتورة العميل (معاينة فورية وطباعة ونسخ كصورة لصق في واتساب)")
     orders_df, _, _, _ = load_data()
     if not orders_df.empty:
-        # إضافة خيار التصفية والاختيار بالتاريخ أولاً
         st.markdown("📅 **تصفية الفواتير حسب التاريخ:**")
         receipt_filter_date = st.date_input("اختر تاريخ الفاتورة للبحث", datetime.date.today(), key="rec_filter_date")
         
