@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import datetime
 import os
+import re
 from io import BytesIO
 
 st.set_page_config(
@@ -161,6 +162,21 @@ def normalize_orders_df(orders):
                     orders[col] = orders[col].astype(int)
     return orders
 
+def parse_items_to_df(items_str):
+    if not items_str or str(items_str).lower() == "nan":
+        return pd.DataFrame(columns=["اسم المنتج", "الكمية"])
+    parts = str(items_str).split(" | ")
+    rows = []
+    for part in parts:
+        match = re.search(r'(.+?)\s*\(الكمية:\s*(\d+)\)', part)
+        if match:
+            item_name = match.group(1).strip()
+            qty = int(match.group(2))
+            rows.append({"اسم المنتج": item_name, "الكمية": qty})
+        else:
+            rows.append({"اسم المنتج": part.strip(), "الكمية": 1})
+    return pd.DataFrame(rows)
+
 def init_db():
     if not os.path.exists(DB_FILE):
         if os.path.exists(ORIGINAL_EXCEL):
@@ -208,7 +224,7 @@ def load_data():
 orders_df, stock_df, expenses_df = load_data()
 
 st.sidebar.markdown('<p class="sidebar-title">🌟 لبانور - لوحة التحكم الإدارية</p>', unsafe_allow_html=True)
-st.sidebar.markdown('<p class="version-tag">📌 الإصدار: v4:30am 27-10-2026</p>', unsafe_allow_html=True)
+st.sidebar.markdown('<p class="version-tag">📌 الإصدار: v5:00am 27-10-2026</p>', unsafe_allow_html=True)
 
 if st.sidebar.button("🔄 تحديث البيانات مع السيرفر"):
     st.cache_data.clear()
@@ -462,7 +478,13 @@ elif menu == "تتبع التوصيل والشحن":
                 st.write(f"🏷️ **باركود الشحن:** {curr_row.get('Cargo_Barcode', 'غير متوفر')}")
                 st.write(f"💰 **إجمالي الطلب:** {curr_row['Total']} ر.ع (منتجات: {curr_row['Products_Total']} + شحن: {curr_row['Shipping_Price']})")
             
-            st.markdown(f"📦 **تفاصيل المنتجات والأصناف:** `{curr_row['Items_Detail']}`")
+            # عرض تفاصيل الأصناف والكميات في جدول منظم
+            st.markdown("📦 **جدول الأصناف والمنتجات المطلوبة:**")
+            items_df = parse_items_to_df(curr_row['Items_Detail'])
+            if not items_df.empty:
+                st.dataframe(items_df, use_container_width=True)
+            else:
+                st.write(curr_row['Items_Detail'])
             
             st.markdown("---")
             st.subheader("✏️ تعديل حالات الطلب والشحن والتحصيل:")
@@ -713,7 +735,7 @@ elif menu == "التقرير المالي التفصيلي (Financial Report)":
     orders_df, stock_df, expenses_df = load_data()
     total_products_value = orders_df['Products_Total'].sum() if not orders_df.empty else 0.0
     total_shipping = orders_df['Shipping_Price'].sum() if not orders_df.empty else 0.0
-    total_expenses = expenses_df['Amount'].sum() if not orders_df.empty else 0.0
+    total_expenses = expenses_df['Amount'].sum() if not expenses_df.empty else 0.0
     net_treasury = total_products_value - total_expenses
 
     m1, m2, m3, m4 = st.columns(4)
