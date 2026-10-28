@@ -241,7 +241,7 @@ def load_data():
 orders_df, stock_df, expenses_df, cargo_companies_list = load_data()
 
 st.sidebar.markdown('<p class="sidebar-title">🌟 لبانور - لوحة التحكم الإدارية</p>', unsafe_allow_html=True)
-st.sidebar.markdown('<p class="version-tag">📌 الإصدار المحدث: v5:00pm 28-10-2026</p>', unsafe_allow_html=True)
+st.sidebar.markdown('<p class="version-tag">📌 الإصدار المحدث: v5:30pm 28-10-2026</p>', unsafe_allow_html=True)
 
 if st.sidebar.button("🔄 تحديث البيانات مع السيرفر"):
     st.cache_data.clear()
@@ -582,9 +582,45 @@ elif menu == "ورقة تجهيز الطلبيات":
                 phone = order['Phone']
                 region = order['Region']
                 current_d_status = order['Delivery_Status']
+                order_date_str = str(order['Date'])
+                total_amount = order['Total']
+                delivery_type = order.get('Delivery_Type', 'غير محدد')
+                current_barcode = str(order.get('Cargo_Barcode', ''))
                 
-                with st.expander(f"📦 طلب رقم #{order_id} - العميل: {cust} ({region}) | الحالة الحالية: {current_d_status}"):
-                    st.write(f"📞 **الهاتف:** {phone} &nbsp;|&nbsp; 🏷️ **عدد الأكياس:** {order['Bags']} &nbsp;|&nbsp; 🚚 **شركة الشحن:** {order['Cargo_Company']}")
+                with st.expander(f"📦 طلب رقم #{order_id} | العميل: {cust} | المبلغ: {total_amount} ر.ع | الحالة: {current_d_status}"):
+                    
+                    # عرض البيانات المطلوبة بوضوح تام (المبلغ، تاريخ الطلب، الهاتف، اسم العميل، المنطقة، مكان التسليم)
+                    col_info_d1, col_info_d2 = st.columns(2)
+                    with col_info_d1:
+                        st.markdown(f"👤 **اسم العميل:** {cust}")
+                        st.markdown(f"📞 **الهاتف:** <span style='direction: ltr; display: inline-block;'>{phone}</span>", unsafe_allow_html=True)
+                        st.markdown(f"📍 **المنطقة:** {region}")
+                    with col_info_d2:
+                        st.markdown(f"📅 **تاريخ الطلب:** <span style='direction: ltr; display: inline-block;'>{order_date_str}</span>", unsafe_allow_html=True)
+                        st.markdown(f"🚚 **مكان التسليم (نوع التسليم):** {delivery_type}")
+                        st.markdown(f"💰 **المبلغ الإجمالي:** {total_amount} ر.ع (المنتجات: {order['Products_Total']} + الشحن: {order['Shipping_Price']})")
+                    
+                    st.markdown(f"🏷️ **عدد الأكياس:** {order['Bags']} &nbsp;|&nbsp; 📦 **شركة الشحن:** {order['Cargo_Company']}")
+                    
+                    # حقل إدخال وحفظ باركود شركة الشحن مباشر
+                    st.markdown("---")
+                    st.markdown("🔍 **إدخال أو مسح باركود شركة الشحن:**")
+                    with st.form(key=f"barcode_form_{order_id}"):
+                        new_bc_input = st.text_input("باركود الشحن (Barcode)", value=current_barcode, key=f"bc_field_{order_id}")
+                        if st.form_submit_button("💾 حفظ الباركود"):
+                            ord_idx_target = orders_df[orders_df['Order_ID'] == order_id].index[0]
+                            orders_df.loc[ord_idx_target, 'Cargo_Barcode'] = new_bc_input
+                            
+                            cargo_df_save = pd.DataFrame({"Cargo_Name": cargo_companies_list})
+                            with pd.ExcelWriter(DB_FILE, engine='openpyxl') as writer:
+                                orders_df.to_excel(writer, sheet_name="Orders", index=False)
+                                stock_df.to_excel(writer, sheet_name="Stock", index=False)
+                                expenses_df.to_excel(writer, sheet_name="Expenses", index=False)
+                                cargo_df_save.to_excel(writer, sheet_name="Cargo_Companies", index=False)
+                            st.cache_data.clear()
+                            st.success(f"✅ تم حفظ الباركود للطلب #{order_id} بنجاح!")
+                            st.rerun()
+
                     st.markdown("---")
                     st.write("✅ **أصناف الطلبية (قم بوضع علامة صح عند تجهيز كل صنف):**")
                     
@@ -1079,7 +1115,7 @@ elif menu == "التقرير المالي التفصيلي":
     orders_df, stock_df, expenses_df, _ = load_data()
     total_products_value = orders_df['Products_Total'].sum() if not orders_df.empty else 0.0
     total_shipping = orders_df['Shipping_Price'].sum() if not orders_df.empty else 0.0
-    total_expenses = expenses_df['Amount'].sum() if not expenses_df.empty else 0.0
+    total_expenses = expenses_df['Amount'].sum() if not orders_df.empty else 0.0
     net_treasury = total_products_value - total_expenses
 
     m1, m2, m3, m4 = st.columns(4)
