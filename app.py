@@ -164,20 +164,22 @@ def normalize_orders_df(orders):
                     orders[col] = orders[col].astype(int)
     return orders
 
-def parse_items_to_df(items_str):
+def parse_items_to_list(items_str):
     if not items_str or str(items_str).lower() == "nan":
-        return pd.DataFrame(columns=["اسم المنتج", "الكمية"])
+        return []
     parts = str(items_str).split(" | ")
-    rows = []
+    parsed_items = []
     for part in parts:
         match = re.search(r'(.+?)\s*\(الكمية:\s*(\d+)\)', part)
         if match:
             item_name = match.group(1).strip()
             qty = int(match.group(2))
-            rows.append({"اسم المنتج": item_name, "الكمية": qty})
+            parsed_items.append({"Item": item_name, "Qty": qty})
         else:
-            rows.append({"اسم المنتج": part.strip(), "الكمية": 1})
-    return pd.DataFrame(rows)
+            item_name = part.strip()
+            if item_name:
+                parsed_items.append({"Item": item_name, "Qty": 1})
+    return parsed_items
 
 def init_db():
     if not os.path.exists(DB_FILE):
@@ -239,7 +241,7 @@ def load_data():
 orders_df, stock_df, expenses_df, cargo_companies_list = load_data()
 
 st.sidebar.markdown('<p class="sidebar-title">🌟 لبانور - لوحة التحكم الإدارية</p>', unsafe_allow_html=True)
-st.sidebar.markdown('<p class="version-tag">📌 الإصدار المحدث: v4:15pm 27-10-2026</p>', unsafe_allow_html=True)
+st.sidebar.markdown('<p class="version-tag">📌 الإصدار المحدث: v4:45pm 28-10-2026</p>', unsafe_allow_html=True)
 
 if st.sidebar.button("🔄 تحديث البيانات مع السيرفر"):
     st.cache_data.clear()
@@ -445,107 +447,6 @@ elif menu == "تسجيل طلب جديد":
                 st.session_state.last_saved_order = next_order_id
                 st.rerun()
 
-    if 'last_saved_order' in st.session_state:
-        saved_id = st.session_state.last_saved_order
-        if saved_id in orders_df['Order_ID'].values:
-            s_row = orders_df[orders_df['Order_ID'] == saved_id].iloc[0]
-            st.markdown("---")
-            st.subheader(f"🖨️ معاينة الفاتورة المصدرة للتو (طلب #{saved_id}):")
-            
-            raw_items = str(s_row['Items_Detail'])
-            formatted_items_text = raw_items.replace(" | ", "<br>- ")
-            if formatted_items_text and not formatted_items_text.startswith("-"):
-                formatted_items_text = "- " + formatted_items_text
-            barcode_str = f"<b>باركود الشحن:</b> {s_row.get('Cargo_Barcode', 'غير متوفر')}" if s_row.get('Cargo_Barcode') else ""
-
-            receipt_html_snippet = f"""
-            <!DOCTYPE html>
-            <html dir="rtl" lang="ar">
-            <head>
-                <meta charset="utf-8">
-                <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
-                <style>
-                    body {{ font-family: Tahoma, sans-serif; background: #fff; margin: 0; padding: 10px; }}
-                    .receipt-container {{ max-height: 750px; overflow-y: auto; border: 2px dashed #2c3e50; border-radius: 12px; padding: 20px; background-color: #ffffff; direction: rtl; text-align: right; box-shadow: 0 4px 10px rgba(0,0,0,0.1); max-width: 420px; margin: 0 auto; }}
-                    h3 {{ text-align: center; color: #2c3e50; margin-bottom: 5px; }}
-                    .tagline {{ text-align: center; color: #666; font-size: 12px; margin-top: 0px; border-bottom: 1px dashed #ddd; padding-bottom: 10px; }}
-                    .info {{ font-size: 14px; color: #333; line-height: 1.6; }}
-                    .items {{ font-size: 13px; color: #333; background: #f9f9f9; padding: 10px; border-radius: 6px; line-height: 1.6; margin: 10px 0; }}
-                    .total {{ font-size: 16px; color: #007bff; font-weight: bold; text-align: center; margin-top: 10px; }}
-                    .btn-container {{ display: flex; gap: 8px; justify-content: center; margin-top: 15px; flex-wrap: wrap; max-width: 420px; margin-left: auto; margin-right: auto; }}
-                    .btn {{ padding: 10px 14px; border: none; border-radius: 6px; font-weight: bold; cursor: pointer; text-decoration: none; font-size: 13px; color: white; }}
-                    .btn-copy {{ background-color: #007bff; }}
-                    .btn-download {{ background-color: #ff9800; }}
-                    .btn-print {{ background-color: #28a745; }}
-                    .toast {{ text-align: center; color: green; font-weight: bold; margin-top: 8px; font-size: 13px; }}
-                </style>
-            </head>
-            <body>
-                <div id="receipt-capture" class="receipt-container">
-                    <h3>=== لبانور - LubaNur ===</h3>
-                    <div class="tagline">السيف والضياء للاستثمار الدولي</div>
-                    <div class="info">
-                        <p><b>رقم الفاتورة:</b> #{s_row['Order_ID']} &nbsp;|&nbsp; <b>التاريخ:</b> <span style="direction: ltr; display: inline-block;">{s_row['Date']}</span></p>
-                        <p><b>العميل:</b> {s_row['Customer']} &nbsp;|&nbsp; <b>الهاتف:</b> <span style="direction: ltr; display: inline-block;">{s_row['Phone']}</span></p>
-                        <p><b>المنطقة:</b> {s_row['Region']}</p>
-                        <p><b>نوع التسليم:</b> {s_row.get('Delivery_Type', 'غير محدد')} &nbsp;|&nbsp; <b>شركة الشحن:</b> {s_row.get('Cargo_Company', 'غير محدد')}</p>
-                        <p><b>حالة دفع الطلب:</b> {s_row.get('Order_Payment', 'لم يتم الدفع')} &nbsp;|&nbsp; <b>دفع الشحن:</b> {s_row.get('Shipping_Payment', 'لم يتم دفع الشحن')}</p>
-                        <p>{barcode_str}</p>
-                    </div>
-                    <hr style="border: 0.5px dashed #ccc;">
-                    <strong>المنتجات:</strong>
-                    <div class="items">{formatted_items_text}</div>
-                    <hr style="border: 0.5px dashed #ccc;">
-                    <div class="info">
-                        <p><b>قيمة المنتجات:</b> {s_row['Products_Total']} ر.ع</p>
-                        <p><b>سعر الشحن:</b> {s_row['Shipping_Price']} ر.ع</p>
-                        <div class="total">الإجمالي الكلي: {s_row['Total']} ر.ع</div>
-                    </div>
-                    <p style="text-align: center; font-weight: bold; color: #2c3e50; margin-top: 15px; border-top: 1px dashed #ddd; padding-top: 10px;">شكراً لتعاملكم معنا!</p>
-                </div>
-                
-                <div class="btn-container">
-                    <button class="btn btn-copy" onclick="copyImage()">📋 نسخ الصورة</button>
-                    <button class="btn btn-download" onclick="downloadImage()">📥 تحميل كصورة</button>
-                    <button class="btn btn-print" onclick="window.print()">🖨️ طباعة</button>
-                </div>
-                <div id="toast-msg" class="toast"></div>
-
-                <script>
-                    function copyImage() {{
-                        const el = document.getElementById('receipt-capture');
-                        html2canvas(el, {{ scale: 2, useCORS: true, scrollY: -window.scrollY }}).then(canvas => {{
-                            canvas.toBlob(blob => {{
-                                try {{
-                                    navigator.clipboard.write([
-                                        new ClipboardItem({{ 'image/png': blob }})
-                                    ]).then(() => {{
-                                        document.getElementById('toast-msg').innerText = '✅ تم النسخ بنجاح!';
-                                    }}).catch(err => {{
-                                        alert('استخدم زر "تحميل كصورة" أدناه للأجهزة اللوحية والأيباد.');
-                                    }});
-                                }} catch(e) {{
-                                    alert('استخدم زر "تحميل كصورة" أدناه للأجهزة اللوحية والأيباد.');
-                                }});
-                            }});
-                        }});
-                    }}
-                    function downloadImage() {{
-                        const el = document.getElementById('receipt-capture');
-                        html2canvas(el, {{ scale: 2, useCORS: true, scrollY: -window.scrollY }}).then(canvas => {{
-                            const link = document.createElement('a');
-                            link.download = 'Invoice_#{s_row["Order_ID"]}.png';
-                            link.href = canvas.toDataURL('image/png');
-                            link.click();
-                            document.getElementById('toast-msg').innerText = '✅ تم تحميل صورة الفاتورة لجهازك!';
-                        }});
-                    }}
-                </script>
-            </body>
-            </html>
-            """
-            st.components.v1.html(receipt_html_snippet, height=740)
-
 elif menu == "تتبع الشحنات والتحصيل":
     st.header("🚚 تقرير تتبع الشحنات والتحصيل ومتابعة التوصيل")
     orders_df, stock_df, expenses_df, cargo_companies_list = load_data()
@@ -601,62 +502,6 @@ elif menu == "تتبع الشحنات والتحصيل":
         if not filtered_df.empty:
             display_cols = ['Order_ID', 'Date', 'Customer', 'Phone', 'Region', 'Cargo_Company', 'Cargo_Barcode', 'Bags', 'Delivery_Status', 'Collection_Status', 'Products_Total', 'Shipping_Price', 'Total']
             st.dataframe(filtered_df[display_cols], use_container_width=True)
-            
-            st.markdown("---")
-            st.subheader("✏️ قسم التعديل السريع لحالة الطلبية (الاستلام، التحصيل، أو التوصيل):")
-            
-            with st.form("quick_update_order_form"):
-                order_ids_list = filtered_df['Order_ID'].tolist()
-                chosen_order_id = st.selectbox("اختر رقم الطلبية (كود الطلب) للتعديل:", order_ids_list)
-                
-                target_order_row = orders_df[orders_df['Order_ID'] == chosen_order_id].iloc[0]
-                orig_idx = orders_df[orders_df['Order_ID'] == chosen_order_id].index[0]
-                
-                st.info(f"📌 الطلب المختار: #{chosen_order_id} - العميل: {target_order_row['Customer']} (الهاتف: {target_order_row['Phone']})")
-                
-                q_col1, q_col2, q_col3, q_col4 = st.columns(4)
-                
-                delivery_status_options = ["قيد التحضير", "تم التسليم لشركة الشحن", "جاري التوصيل", "تم تسليم العميل", "لم يتم التوصيل", "مرتجع"]
-                cur_d_stat = str(target_order_row.get('Delivery_Status', 'قيد التحضير'))
-                d_i = delivery_status_options.index(cur_d_stat) if cur_d_stat in delivery_status_options else 0
-                new_d_stat = q_col1.selectbox("حالة التوصيل", delivery_status_options, index=d_i)
-                
-                order_pay_options = ["لم يتم الدفع", "تم الدفع"]
-                cur_o_pay = str(target_order_row.get('Order_Payment', 'لم يتم الدفع'))
-                o_i = order_pay_options.index(cur_o_pay) if cur_o_pay in order_pay_options else 0
-                new_o_pay = q_col2.selectbox("دفع الطلب", order_pay_options, index=o_i)
-                
-                shipping_pay_options = ["لم يتم دفع الشحن", "تم دفع الشحن"]
-                cur_s_pay = str(target_order_row.get('Shipping_Payment', 'لم يتم دفع الشحن'))
-                s_i = shipping_pay_options.index(cur_s_pay) if cur_s_pay in shipping_pay_options else 0
-                new_s_pay = q_col3.selectbox("دفع الشحن", shipping_pay_options, index=s_i)
-                
-                collection_options = ["قيد التحصيل", "مدفوع بالكامل"]
-                cur_coll = str(target_order_row.get('Collection_Status', 'قيد التحصيل'))
-                c_i = collection_options.index(cur_coll) if cur_coll in collection_options else 0
-                new_coll = q_col4.selectbox("حالة التحصيل", collection_options, index=c_i)
-                
-                new_barcode_val = st.text_input("تعديل باركود شركة الشحن", value=str(target_order_row.get('Cargo_Barcode', '')))
-                
-                if st.form_submit_button("💾 حفظ وتحديث حالة الطلبية فوراً"):
-                    orders_df.loc[orig_idx, 'Delivery_Status'] = new_d_stat
-                    orders_df.loc[orig_idx, 'Order_Payment'] = new_o_pay
-                    orders_df.loc[orig_idx, 'Shipping_Payment'] = new_s_pay
-                    orders_df.loc[orig_idx, 'Collection_Status'] = new_coll
-                    orders_df.loc[orig_idx, 'Cargo_Barcode'] = new_barcode_val
-                    
-                    cargo_df_save = pd.DataFrame({"Cargo_Name": cargo_companies_list})
-                    with pd.ExcelWriter(DB_FILE, engine='openpyxl') as writer:
-                        orders_df.to_excel(writer, sheet_name="Orders", index=False)
-                        stock_df.to_excel(writer, sheet_name="Stock", index=False)
-                        expenses_df.to_excel(writer, sheet_name="Expenses", index=False)
-                        cargo_df_save.to_excel(writer, sheet_name="Cargo_Companies", index=False)
-                    
-                    st.cache_data.clear()
-                    st.success(f"✅ تم تحديث الطلب رقم #{chosen_order_id} بنجاح!")
-                    st.rerun()
-        else:
-            st.warning("لا توجد طلبيات مطابقة لمعايير البحث المحددة.")
     else:
         st.info("لا توجد طلبيات مسجلة في النظام بعد.")
 
@@ -687,12 +532,12 @@ elif menu == "ورقة تجهيز الطلبيات":
                     st.markdown("---")
                     st.write("✅ **أصناف الطلبية (قم بوضع علامة صح عند تجهيز كل صنف):**")
                     
-                    items_df = parse_items_to_df(order['Items_Detail'])
+                    parsed_items = parse_items_to_list(order['Items_Detail'])
                     
                     packed_all = True
-                    for i, item_row in items_df.iterrows():
-                        iname = item_row['اسم المنتج']
-                        iqty = item_row['الكمية']
+                    for i, item_dict in enumerate(parsed_items):
+                        iname = item_dict['Item']
+                        iqty = item_dict['Qty']
                         
                         col_chk1, col_chk2 = st.columns([4, 1])
                         with col_chk1:
@@ -748,7 +593,6 @@ elif menu == "إدارة المخزون والجرد":
             r_item = st.selectbox("اختر المنتج", stock_df['Item_Name'].tolist(), key="rst_item")
             r_action = st.selectbox("نوع العملية", ["إضافة إلى المخزون (تعزيز)", "سحب من المخزون"])
             r_qty = st.number_input("الكمية", min_value=1, value=1)
-            r_note = st.text_input("سبب العملية / ملاحظات")
             
             if st.form_submit_button("💾 تنفيذ وتحديث المخزون"):
                 idx_st = stock_df[stock_df['Item_Name'] == r_item].index[0]
@@ -770,9 +614,7 @@ elif menu == "إدارة المخزون والجرد":
                 st.rerun()
                 
     with tab2:
-        st.subheader("تسوية المخزون بعد الجرد الفعلي (حساب العجز والزيادة)")
-        st.markdown("💡 قم بإدخال الكمية الفعلية الموجودة في المخزون بعد عملية الجرد وسيقوم النظام بحساب الفارق (العجز أو الزيادة) وتحديث الرصيد.")
-        
+        st.subheader("تسوية المخزون بعد الجرد الفعلي")
         if not stock_df.empty:
             audit_df = stock_df.copy()
             audit_df['الكمية الفعلية بالجرد'] = audit_df['Qty']
@@ -827,7 +669,7 @@ elif menu == "إدارة شركات الشحن":
                 st.error("الاسم فارغ أو موجود مسبقاً.")
 
 elif menu == "تقرير الشحن":
-    st.header("📑 تقرير تسليم الشحنات لشركات الشحن (مع خيارات التصدير والطباعة)")
+    st.header("📑 تقرير تسليم الشحنات لشركات الشحن")
     orders_df, _, _, cargo_companies_list = load_data()
     
     if not orders_df.empty:
@@ -864,96 +706,6 @@ elif menu == "تقرير الشحن":
 
             st.markdown(f"### 📋 بيان شحنات شركة: **{selected_cargo}** (إجمالي الشحنات: {len(report_display_df)})")
             st.dataframe(report_display_df, use_container_width=True)
-
-            html_report_card = f"""
-            <!DOCTYPE html>
-            <html dir="rtl" lang="ar">
-            <head>
-                <meta charset="utf-8">
-                <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
-                <style>
-                    body {{ font-family: Tahoma, sans-serif; background: #fff; direction: rtl; padding: 20px; color: #333; }}
-                    .report-box {{ background: #fff; padding: 20px; border-radius: 8px; border: 1px solid #ddd; max-width: 900px; margin: 0 auto; }}
-                    h2 {{ text-align: center; color: #2c3e50; margin-bottom: 5px; }}
-                    .sub-header {{ text-align: center; color: #666; font-size: 13px; margin-bottom: 20px; border-bottom: 2px solid #007bff; padding-bottom: 10px; }}
-                    table {{ width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 12px; }}
-                    th, td {{ border: 1px solid #bdc3c7; padding: 8px; text-align: center; }}
-                    th {{ background-color: #2c3e50; color: white; }}
-                    tr:nth-child(even) {{ background-color: #f9f9f9; }}
-                    .actions {{ display: flex; gap: 10px; justify-content: center; margin-top: 20px; }}
-                    .btn {{ padding: 10px 18px; border: none; border-radius: 6px; font-weight: bold; cursor: pointer; color: white; font-size: 13px; }}
-                    .btn-print {{ background-color: #28a745; }}
-                    .btn-download {{ background-color: #ff9800; }}
-                    .toast {{ text-align: center; color: green; font-weight: bold; margin-top: 10px; font-size: 13px; }}
-                </style>
-            </head>
-            <body>
-                <div id="capture-area" class="report-box">
-                    <h2>تقرير تسليم الشحنات - شركة {selected_cargo}</h2>
-                    <div class="sub-header">لبانور / السيف والضياء للاستثمار الدولي &nbsp;|&nbsp; التاريخ: {datetime.date.today()}</div>
-                    <table>
-                        <thead>
-                            <tr>
-                                <th>#</th>
-                                <th>رقم الفاتورة</th>
-                                <th>التاريخ</th>
-                                <th>اسم العميل</th>
-                                <th>الهاتف</th>
-                                <th>المنطقة</th>
-                                <th>الأكياس</th>
-                                <th>دفع الطلب</th>
-                                <th>دفع الشحن</th>
-                                <th>باركود الشحن</th>
-                                <th>الإجمالي</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-            """
-            
-            for i, (_, r) in enumerate(filtered_cargo_df.iterrows(), 1):
-                html_report_card += f"""
-                            <tr>
-                                <td>{i}</td>
-                                <td>#{r['Order_ID']}</td>
-                                <td>{r['Date']}</td>
-                                <td>{r['Customer']}</td>
-                                <td>{r['Phone']}</td>
-                                <td>{r['Region']}</td>
-                                <td>{r['Bags']}</td>
-                                <td>{r['Order_Payment']}</td>
-                                <td>{r['Shipping_Payment']}</td>
-                                <td>{r.get('Cargo_Barcode', '')}</td>
-                                <td>{r['Total']} ر.ع</td>
-                            </tr>
-                """
-            
-            html_report_card += f"""
-                        </tbody>
-                    </table>
-                </div>
-                
-                <div class="actions">
-                    <button class="btn btn-print" onclick="window.print()">🖨️ طباعة أو تصدير PDF</button>
-                    <button class="btn btn-download" onclick="downloadReportImage()">📥 تحميل التقرير كصورة</button>
-                </div>
-                <div id="toast" class="toast"></div>
-
-                <script>
-                    function downloadReportImage() {{
-                        const el = document.getElementById('capture-area');
-                        html2canvas(el, {{ scale: 2, useCORS: true }}).then(canvas => {{
-                            const link = document.createElement('a');
-                            link.download = 'Cargo_Report_{selected_cargo}.png';
-                            link.href = canvas.toDataURL('image/png');
-                            link.click();
-                            document.getElementById('toast').innerText = '✅ تم تحميل صورة التقرير بنجاح!';
-                        }});
-                    }}
-                </script>
-            </body>
-            </html>
-            """
-            st.components.v1.html(html_report_card, height=600)
         else:
             st.warning("لا توجد شحنات مطابقة لخيارات البحث المحددة.")
     else:
@@ -1116,8 +868,9 @@ elif menu == "فاتورة العميل":
             st.warning("لا توجد فواتير مسجلة في تاريخ اليوم المحدد.")
 
 elif menu == "تعديل وحذف الفواتير":
-    st.header("✏️ تعديل وحذف الفواتير مع جدول الأصناف الاحترافي")
+    st.header("✏️ تعديل وحذف الفواتير مع قائمة المنتجات المنسدلة وسهولة الحذف والإضافة")
     orders_df, stock_df, expenses_df, cargo_companies_list = load_data()
+    
     if not orders_df.empty:
         edit_order_id = st.selectbox("اختر رقم الطلب للتعديل", orders_df['Order_ID'].tolist())
         target_row = orders_df[orders_df['Order_ID'] == edit_order_id].iloc[0]
@@ -1149,25 +902,8 @@ elif menu == "تعديل وحذف الفواتير":
             s_idx = shp_pay_list.index(cur_shp_pay) if cur_shp_pay in shp_pay_list else 0
             e_shp_pay = st.selectbox("حالة دفع قيمة الشحن", shp_pay_list, index=s_idx)
             
-            st.markdown("---")
-            st.markdown("📦 **جدول أصناف الفاتورة (إضافة، تعديل، أو حذف أصناف):**")
-            
-            current_items_df = parse_items_to_df(target_row['Items_Detail'])
-            edited_items_df = st.data_editor(current_items_df, num_rows="dynamic", use_container_width=True, key=f"editor_items_{edit_order_id}")
-            
-            if st.form_submit_button("💾 حفظ تعديلات الفاتورة والأصناف"):
-                updated_items_list = []
-                for _, row_it in edited_items_df.iterrows():
-                    iname = str(row_it.get('اسم المنتج', '')).strip()
-                    try:
-                        iqty = int(row_it.get('الكمية', 1))
-                    except:
-                        iqty = 1
-                    if iname and iname.lower() != 'nan':
-                        updated_items_list.append(f"{iname} (الكمية: {iqty})")
-                
-                new_items_detail_str = " | ".join(updated_items_list)
-                
+            submitted_main_edit = st.form_submit_button("💾 حفظ البيانات الأساسية للفاتورة")
+            if submitted_main_edit:
                 orders_df.loc[orders_df['Order_ID'] == edit_order_id, 'Customer'] = e_cust
                 orders_df.loc[orders_df['Order_ID'] == edit_order_id, 'Phone'] = e_phone
                 orders_df.loc[orders_df['Order_ID'] == edit_order_id, 'Region'] = e_region
@@ -1179,7 +915,6 @@ elif menu == "تعديل وحذف الفواتير":
                 orders_df.loc[orders_df['Order_ID'] == edit_order_id, 'Cargo_Barcode'] = e_barcode
                 orders_df.loc[orders_df['Order_ID'] == edit_order_id, 'Order_Payment'] = e_ord_pay
                 orders_df.loc[orders_df['Order_ID'] == edit_order_id, 'Shipping_Payment'] = e_shp_pay
-                orders_df.loc[orders_df['Order_ID'] == edit_order_id, 'Items_Detail'] = new_items_detail_str
                 
                 new_coll_status = "مدفوع بالكامل" if (e_ord_pay == "تم الدفع" and e_shp_pay == "تم دفع الشحن") else "قيد التحصيل"
                 orders_df.loc[orders_df['Order_ID'] == edit_order_id, 'Collection_Status'] = new_coll_status
@@ -1191,10 +926,61 @@ elif menu == "تعديل وحذف الفواتير":
                     expenses_df.to_excel(writer, sheet_name="Expenses", index=False)
                     cargo_df_save.to_excel(writer, sheet_name="Cargo_Companies", index=False)
                 st.cache_data.clear()
-                st.success("✅ تم تعديل الفاتورة والأصناف وحفظ البيانات بنجاح!")
+                st.success("✅ تم تحديث بيانات الفاتورة بنجاح!")
                 st.rerun()
+
+        st.markdown("---")
+        st.subheader("🛒 إدارة أصناف هذه الفاتورة (إضافة منتج جديد أو حذف منتج موجود):")
+        
+        current_parsed_items = parse_items_to_list(target_row['Items_Detail'])
+        
+        if current_parsed_items:
+            st.markdown("**الأصناف الحالية في الفاتورة:**")
+            for idx, item_dict in enumerate(current_parsed_items):
+                col_item_info1, col_item_info2 = st.columns([5, 1])
+                with col_item_info1:
+                    st.write(f"• {item_dict['Item']} &nbsp;|&nbsp; **الكمية:** {item_dict['Qty']}")
+                with col_item_info2:
+                    if st.button("🗑️ حذف", key=f"del_item_inv_{edit_order_id}_{idx}"):
+                        current_parsed_items.pop(idx)
+                        new_items_str = " | ".join([f"{x['Item']} (الكمية: {x['Qty']})" for x in current_parsed_items]) if current_parsed_items else "لا توجد أصناف"
+                        orders_df.loc[orders_df['Order_ID'] == edit_order_id, 'Items_Detail'] = new_items_str
+                        
+                        cargo_df_save = pd.DataFrame({"Cargo_Name": cargo_companies_list})
+                        with pd.ExcelWriter(DB_FILE, engine='openpyxl') as writer:
+                            orders_df.to_excel(writer, sheet_name="Orders", index=False)
+                            stock_df.to_excel(writer, sheet_name="Stock", index=False)
+                            expenses_df.to_excel(writer, sheet_name="Expenses", index=False)
+                            cargo_df_save.to_excel(writer, sheet_name="Cargo_Companies", index=False)
+                        st.cache_data.clear()
+                        st.success("✅ تم حذف الصنف بنجاح!")
+                        st.rerun()
+        else:
+            st.info("لا توجد أصناف مسجلة في هذه الفاتورة.")
+
+        st.markdown("---")
+        st.markdown("**➕ إضافة منتج جديد للفاتورة باستخدام القائمة المنسدلة:**")
+        with st.form("add_item_to_inv_form"):
+            add_sel_item = st.selectbox("اختر المنتج", EXACT_ITEMS, key=f"add_item_sel_{edit_order_id}")
+            add_sel_qty = st.number_input("الكمية", min_value=1, value=1, key=f"add_item_qty_{edit_order_id}")
+            
+            if st.form_submit_button("➕ إضافة المنتج إلى الفاتورة"):
+                current_parsed_items.append({"Item": add_sel_item, "Qty": add_sel_qty})
+                new_items_str = " | ".join([f"{x['Item']} (الكمية: {x['Qty']})" for x in current_parsed_items])
+                orders_df.loc[orders_df['Order_ID'] == edit_order_id, 'Items_Detail'] = new_items_str
                 
-        if st.button("🗑️ حذف الفاتورة بالكامل"):
+                cargo_df_save = pd.DataFrame({"Cargo_Name": cargo_companies_list})
+                with pd.ExcelWriter(DB_FILE, engine='openpyxl') as writer:
+                    orders_df.to_excel(writer, sheet_name="Orders", index=False)
+                    stock_df.to_excel(writer, sheet_name="Stock", index=False)
+                    expenses_df.to_excel(writer, sheet_name="Expenses", index=False)
+                    cargo_df_save.to_excel(writer, sheet_name="Cargo_Companies", index=False)
+                st.cache_data.clear()
+                st.success("✅ تمت إضافة المنتج بنجاح!")
+                st.rerun()
+
+        st.markdown("---")
+        if st.button("🗑️ حذف الفاتورة بالكامل نهائياً"):
             orders_df = orders_df[orders_df['Order_ID'] != edit_order_id]
             cargo_df_save = pd.DataFrame({"Cargo_Name": cargo_companies_list})
             with pd.ExcelWriter(DB_FILE, engine='openpyxl') as writer:
@@ -1237,7 +1023,7 @@ elif menu == "التقرير المالي التفصيلي":
     orders_df, stock_df, expenses_df, _ = load_data()
     total_products_value = orders_df['Products_Total'].sum() if not orders_df.empty else 0.0
     total_shipping = orders_df['Shipping_Price'].sum() if not orders_df.empty else 0.0
-    total_expenses = expenses_df['Amount'].sum() if not orders_df.empty else 0.0
+    total_expenses = expenses_df['Amount'].sum() if not expenses_df.empty else 0.0
     net_treasury = total_products_value - total_expenses
 
     m1, m2, m3, m4 = st.columns(4)
