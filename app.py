@@ -3,6 +3,8 @@ import pandas as pd
 import datetime
 import os
 import re
+import tempfile
+import shutil
 
 st.set_page_config(
     page_title="LubaNur Order & Stock System",
@@ -11,8 +13,20 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# === 🔒 نظام حماية كلمة المرور (Password Protection) ===
-PASSWORD_CORRECT = "142025"
+# === 🔒 حماية الدخول: عرّف APP_PASSWORD في Streamlit Secrets أو متغيرات البيئة ===
+def get_app_password():
+    try:
+        secret_value = st.secrets.get("APP_PASSWORD", "")
+    except Exception:
+        secret_value = ""
+    return str(secret_value or os.environ.get("APP_PASSWORD", "")).strip()
+
+PASSWORD_CORRECT = get_app_password()
+
+if not PASSWORD_CORRECT:
+    st.error("إعداد كلمة المرور غير مكتمل. عرّف APP_PASSWORD في Streamlit Secrets أو متغيرات البيئة قبل تشغيل النظام.")
+    st.code('APP_PASSWORD = "ضع_كلمة_مرور_قوية_هنا"', language="toml")
+    st.stop()
 
 if "authenticated" not in st.session_state:
     st.session_state.authenticated = False
@@ -162,7 +176,6 @@ def normalize_orders_df(orders):
                 if col in ["Bags", "Order_ID"]:
                     orders[col] = orders[col].astype(int)
                     
-    # تحديث إجمالي الطلب ليكون مجموع المنتجات + الشحن
     orders['Total'] = orders['Products_Total'] + orders['Shipping_Price']
     return orders
 
@@ -183,9 +196,62 @@ def parse_items_to_list(items_str):
                 parsed_items.append({"Item": item_name, "Qty": 1})
     return parsed_items
 
+def item_quantities(items):
+    quantities = {}
+    for item in items or []:
+        name = str(item.get("Item", "")).strip()
+        try:
+            qty = int(item.get("Qty", 0))
+        except (TypeError, ValueError):
+            qty = 0
+        if name and qty > 0:
+            quantities[name] = quantities.get(name, 0) + qty
+    return quantities
+
+def adjust_stock_for_order(stock_df, old_items, new_items):
+    """Apply only the quantity delta between old and new invoice items.
+    Returns (updated_stock, error_message); no changes are applied on insufficient stock.
+    """
+    updated = stock_df.copy(deep=True)
+    old_q = item_quantities(old_items)
+    new_q = item_quantities(new_items)
+    all_names = set(old_q) | set(new_q)
+    for name in all_names:
+        if name not in updated["Item_Name"].astype(str).values:
+            if new_q.get(name, 0) > old_q.get(name, 0):
+                return stock_df, f"الصنف «{name}» غير موجود في جدول المخزون."
+            continue
+        idx = updated.index[updated["Item_Name"].astype(str) == name][0]
+        qty_value = pd.to_numeric(updated.loc[idx, "Qty"], errors="coerce")
+        current_qty = int(qty_value) if pd.notna(qty_value) else 0
+        delta = old_q.get(name, 0) - new_q.get(name, 0)
+        # delta > 0 means items were removed from the invoice and stock must be returned.
+        if delta < 0 and current_qty < -delta:
+            return stock_df, f"الكمية المتاحة من «{name}» غير كافية. المتاح: {current_qty}، المطلوب إضافته للفاتورة: {-delta}."
+        updated.loc[idx, "Qty"] = current_qty + delta
+    return updated, None
+
+def save_all_data(orders_df, stock_df, expenses_df, cargo_companies_list):
+    """Write a complete workbook through a temporary file to reduce corruption risk."""
+    cargo_df_save = pd.DataFrame({"Cargo_Name": cargo_companies_list})
+    db_dir = os.path.dirname(os.path.abspath(DB_FILE))
+    fd, temp_path = tempfile.mkstemp(suffix=".xlsx", dir=db_dir)
+    os.close(fd)
+    try:
+        with pd.ExcelWriter(temp_path, engine="openpyxl") as writer:
+            orders_df.to_excel(writer, sheet_name="Orders", index=False)
+            stock_df.to_excel(writer, sheet_name="Stock", index=False)
+            expenses_df.to_excel(writer, sheet_name="Expenses", index=False)
+            cargo_df_save.to_excel(writer, sheet_name="Cargo_Companies", index=False)
+        shutil.move(temp_path, DB_FILE)
+    finally:
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
+    st.cache_data.clear()
+
 def init_db():
-    if not os.path.exists(DB_FILE):
-        if os.path.exists(ORIGINAL_EXCEL):
+    if not os.path.exists(DB_FILE) or os.path.getsize(DB_FILE) == 0:
+        if os.path.exists(ORIGINAL_EXCEL) and os.path.getsize(ORIGINAL_EXCEL) > 0:
             try:
                 xls_orig = pd.ExcelFile(ORIGINAL_EXCEL)
                 stock = pd.read_excel(xls_orig, sheet_name="Stock +").groupby("Item Name")["Qty"].sum().reset_index()
@@ -205,13 +271,18 @@ def init_db():
             expenses.to_excel(writer, sheet_name="Expenses", index=False)
             cargo_df.to_excel(writer, sheet_name="Cargo_Companies", index=False)
     else:
-        xls = pd.ExcelFile(DB_FILE)
-        orders = pd.read_excel(xls, sheet_name="Orders")
-        orders = normalize_orders_df(orders)
-        
-        stock = pd.read_excel(xls, sheet_name="Stock") if "Stock" in xls.sheet_names else pd.DataFrame(columns=["Item_Name", "Qty"])
-        expenses = pd.read_excel(xls, sheet_name="Expenses") if "Expenses" in xls.sheet_names else pd.DataFrame(columns=["Expense_ID", "Date", "Category", "Amount", "Description"])
-        cargo_df = pd.read_excel(xls, sheet_name="Cargo_Companies") if "Cargo_Companies" in xls.sheet_names else pd.DataFrame({"Cargo_Name": DEFAULT_CARGO_COMPANIES})
+        try:
+            xls = pd.ExcelFile(DB_FILE)
+            orders = pd.read_excel(xls, sheet_name="Orders")
+            orders = normalize_orders_df(orders)
+            stock = pd.read_excel(xls, sheet_name="Stock") if "Stock" in xls.sheet_names else pd.DataFrame(columns=["Item_Name", "Qty"])
+            expenses = pd.read_excel(xls, sheet_name="Expenses") if "Expenses" in xls.sheet_names else pd.DataFrame(columns=["Expense_ID", "Date", "Category", "Amount", "Description"])
+            cargo_df = pd.read_excel(xls, sheet_name="Cargo_Companies") if "Cargo_Companies" in xls.sheet_names else pd.DataFrame({"Cargo_Name": DEFAULT_CARGO_COMPANIES})
+        except Exception:
+            stock = pd.DataFrame({"Item_Name": EXACT_ITEMS, "Qty": [50] * len(EXACT_ITEMS)})
+            orders = pd.DataFrame(columns=["Order_ID", "Date", "Customer", "Phone", "Region", "Items_Detail", "Products_Total", "Shipping_Price", "Total", "Order_Payment", "Shipping_Payment", "Cargo_Company", "Delivery_Type", "Delivery_Status", "Collection_Status", "Bags", "Cargo_Barcode"])
+            expenses = pd.DataFrame(columns=["Expense_ID", "Date", "Category", "Amount", "Description"])
+            cargo_df = pd.DataFrame({"Cargo_Name": DEFAULT_CARGO_COMPANIES})
 
         with pd.ExcelWriter(DB_FILE, engine='openpyxl') as writer:
             orders.to_excel(writer, sheet_name="Orders", index=False)
@@ -223,13 +294,21 @@ init_db()
 
 def load_data():
     st.cache_data.clear()
-    xls = pd.ExcelFile(DB_FILE)
-    orders = pd.read_excel(xls, sheet_name="Orders")
-    orders = normalize_orders_df(orders)
-    
-    stock = pd.read_excel(xls, sheet_name="Stock")
-    expenses = pd.read_excel(xls, sheet_name="Expenses") if "Expenses" in xls.sheet_names else pd.DataFrame(columns=["Expense_ID", "Date", "Category", "Amount", "Description"])
-    cargo_df = pd.read_excel(xls, sheet_name="Cargo_Companies") if "Cargo_Companies" in xls.sheet_names else pd.DataFrame({"Cargo_Name": DEFAULT_CARGO_COMPANIES})
+    try:
+        xls = pd.ExcelFile(DB_FILE)
+        orders = pd.read_excel(xls, sheet_name="Orders")
+        orders = normalize_orders_df(orders)
+        stock = pd.read_excel(xls, sheet_name="Stock")
+        expenses = pd.read_excel(xls, sheet_name="Expenses") if "Expenses" in xls.sheet_names else pd.DataFrame(columns=["Expense_ID", "Date", "Category", "Amount", "Description"])
+        cargo_df = pd.read_excel(xls, sheet_name="Cargo_Companies") if "Cargo_Companies" in xls.sheet_names else pd.DataFrame({"Cargo_Name": DEFAULT_CARGO_COMPANIES})
+    except Exception:
+        init_db()
+        xls = pd.ExcelFile(DB_FILE)
+        orders = pd.read_excel(xls, sheet_name="Orders")
+        orders = normalize_orders_df(orders)
+        stock = pd.read_excel(xls, sheet_name="Stock")
+        expenses = pd.DataFrame(columns=["Expense_ID", "Date", "Category", "Amount", "Description"])
+        cargo_df = pd.DataFrame({"Cargo_Name": DEFAULT_CARGO_COMPANIES})
     
     cargo_list = cargo_df['Cargo_Name'].dropna().astype(str).tolist() if not cargo_df.empty else DEFAULT_CARGO_COMPANIES
     if "وصل لي" in cargo_list:
@@ -339,12 +418,12 @@ def render_invoice_snippet(order_row):
 orders_df, stock_df, expenses_df, cargo_companies_list = load_data()
 
 st.sidebar.markdown('<p class="sidebar-title">🌟 لبانور - لوحة التحكم الإدارية</p>', unsafe_allow_html=True)
-st.sidebar.markdown('<p class="version-tag">📌 الإصدار المحدث: v6:00pm 28-10-2026</p>', unsafe_allow_html=True)
+st.sidebar.markdown('<p class="version-tag">📌 الإصدار المحدث: v6:10pm 28-10-2026</p>', unsafe_allow_html=True)
 
-if st.sidebar.button("🔄 تحديث البيانات مع السيرفر"):
+if st.sidebar.button("🔄 إعادة تحميل البيانات من ملف النظام"):
     st.cache_data.clear()
-    st.success("✅ تم تحديث ومزامنة البيانات بنجاح!")
     st.rerun()
+st.sidebar.caption("ملاحظة: إعادة التحميل تقرأ ملف Excel الحالي فقط؛ لا توجد مزامنة سحابية متعددة المستخدمين مفعّلة في هذه النسخة.")
 
 menu_options = {
     "📊 اللوحة الرئيسية": "اللوحة الرئيسية",
@@ -413,8 +492,8 @@ def get_cargo_summary_df(orders_df):
         shipping_total = group['Shipping_Price'].sum()
         grand_total = group['Total'].sum()
         
-        collected_amount = group[group['Collection_Status'] == 'مدفوع بالكامل']['Products_Total'].sum()
-        pending_amount = group[group['Collection_Status'] == 'قيد التحصيل']['Products_Total'].sum()
+        collected_amount = group[group['Order_Payment'] == 'تم الدفع']['Products_Total'].sum()
+        pending_amount = group[group['Order_Payment'] != 'تم الدفع']['Products_Total'].sum()
         
         summary_list.append({
             'شركة الشحن': company,
@@ -432,30 +511,27 @@ if menu == "اللوحة الرئيسية":
     st.header("📊 الملخص التشغيلي والمالي الشامل")
     orders_df, stock_df, expenses_df, _ = load_data()
     
-    # احتساب المبيعات الحقيقية بدون الشحن
     total_products_sales = orders_df['Products_Total'].sum() if not orders_df.empty else 0.0
     total_shipping = orders_df['Shipping_Price'].sum() if not orders_df.empty else 0.0
     total_expenses = expenses_df['Amount'].sum() if not expenses_df.empty else 0.0
     
-    # القيمة المحصلة فعلياً لمنتجاتنا فقط (مدفوع بالكامل)
-    collected_products_total = orders_df[orders_df['Collection_Status'] == 'مدفوع بالكامل']['Products_Total'].sum() if not orders_df.empty else 0.0
-    
-    # المبالغ المتبقية قيد التحصيل لدى شركات الشحن (منتجات فقط)
-    pending_products_total = orders_df[orders_df['Collection_Status'] == 'قيد التحصيل']['Products_Total'].sum() if not orders_df.empty else 0.0
-    
-    # صافي السيولة الفعلية المتاحة بالخزينة = (ما تم تحصيله فعلياً من المنتجات) - المصروفات
-    actual_treasury = collected_products_total - total_expenses
+    collected_products_total = orders_df[orders_df['Order_Payment'] == 'تم الدفع']['Products_Total'].sum() if not orders_df.empty else 0.0
+    collected_shipping_total = orders_df[orders_df['Shipping_Payment'] == 'تم دفع الشحن']['Shipping_Price'].sum() if not orders_df.empty else 0.0
+    pending_products_total = orders_df[orders_df['Order_Payment'] != 'تم الدفع']['Products_Total'].sum() if not orders_df.empty else 0.0
+    pending_shipping_total = orders_df[orders_df['Shipping_Payment'] != 'تم دفع الشحن']['Shipping_Price'].sum() if not orders_df.empty else 0.0
+    total_collected_cash = collected_products_total + collected_shipping_total
+    actual_treasury = total_collected_cash - total_expenses
 
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("إجمالي مبيعات المنتجات (بدون شحن)", f"{total_products_sales:.3f} ر.ع")
-    c2.metric("المبالغ المحصلة فعلياً (منتجات)", f"{collected_products_total:.3f} ر.ع")
-    c3.metric("إجمالي المصروفات", f"{total_expenses:.3f} ر.ع")
-    c4.metric("💰 السيولة الفعلية بالخزينة", f"{actual_treasury:.3f} ر.ع")
+    c2.metric("إجمالي المبالغ المحصلة (منتجات + شحن)", f"{total_collected_cash:.3f} ر.ع")
+    c3.metric("إجمالي المصروفات المسجلة", f"{total_expenses:.3f} ر.ع")
+    c4.metric("💰 صافي التدفق النقدي المسجل", f"{actual_treasury:.3f} ر.ع")
 
     st.markdown("---")
     sc1, sc2 = st.columns(2)
     sc1.metric("⏳ المبالغ قيد التحصيل لدى شركات الشحن (منتجات)", f"{pending_products_total:.3f} ر.ع")
-    sc2.metric("🚚 إجمالي قيمة الشحن المسددة/المستحقة للشحن", f"{total_shipping:.3f} ر.ع")
+    sc2.metric("🚚 الشحن: المحصل {0:.3f} ر.ع | غير المحصل {1:.3f} ر.ع".format(collected_shipping_total, pending_shipping_total), f"{total_shipping:.3f} ر.ع إجمالي")
 
     st.markdown("---")
     st.subheader("📋 ملخص مبيعات ومستحقات المنتجات لدى شركات الشحن")
@@ -524,41 +600,49 @@ elif menu == "تسجيل طلب جديد":
         if st.button("✅ حفظ واعتماد الطلب نهائياً وخصم المخزون"):
             if not cust_name:
                 st.error("الرجاء إدخال اسم العميل.")
+            elif not st.session_state.cart:
+                st.error("الرجاء إضافة صنف واحد على الأقل إلى الطلب.")
             else:
-                items_summary_list = [f"{r['Item']} (الكمية: {r['Qty']})" for r in st.session_state.cart]
-                items_detail_str = " | ".join(items_summary_list)
-                grand_total = products_total + shipping_price
-                coll_status = "مدفوع بالكامل" if (order_payment == "تم الدفع" and shipping_payment == "تم دفع الشحن") else "قيد التحصيل"
+                required = item_quantities(st.session_state.cart)
+                stock_issues = []
+                for item_name, needed_qty in required.items():
+                    rows = stock_df.loc[stock_df["Item_Name"].astype(str) == item_name, "Qty"]
+                    available_value = pd.to_numeric(rows.iloc[0], errors="coerce") if not rows.empty else 0
+                    available_qty = int(available_value) if pd.notna(available_value) else 0
+                    if rows.empty or available_qty < needed_qty:
+                        stock_issues.append(f"{item_name}: المتاح {available_qty}، المطلوب {needed_qty}")
+                if stock_issues:
+                    st.error("لا يمكن حفظ الطلب بسبب نقص المخزون: " + "؛ ".join(stock_issues))
+                else:
+                    items_summary_list = [f"{r['Item']} (الكمية: {r['Qty']})" for r in st.session_state.cart]
+                    items_detail_str = " | ".join(items_summary_list)
+                    grand_total = products_total + shipping_price
+                    coll_status = "مدفوع بالكامل" if (order_payment == "تم الدفع" and shipping_payment == "تم دفع الشحن") else "قيد التحصيل"
                 
-                new_row = {
-                    "Order_ID": next_order_id, "Date": str(order_date), "Customer": cust_name, "Phone": phone, "Region": region,
-                    "Items_Detail": items_detail_str, "Products_Total": products_total, "Shipping_Price": shipping_price, "Total": grand_total,
-                    "Order_Payment": order_payment, "Shipping_Payment": shipping_payment, "Cargo_Company": cargo_company, "Delivery_Type": delivery_type,
-                    "Delivery_Status": "قيد التحضير", "Collection_Status": coll_status, "Bags": bags, "Cargo_Barcode": ""
-                }
+                    new_row = {
+                        "Order_ID": next_order_id, "Date": str(order_date), "Customer": cust_name, "Phone": phone, "Region": region,
+                        "Items_Detail": items_detail_str, "Products_Total": products_total, "Shipping_Price": shipping_price, "Total": grand_total,
+                        "Order_Payment": order_payment, "Shipping_Payment": shipping_payment, "Cargo_Company": cargo_company, "Delivery_Type": delivery_type,
+                        "Delivery_Status": "قيد التحضير", "Collection_Status": coll_status, "Bags": bags, "Cargo_Barcode": ""
+                    }
                 
-                for r in st.session_state.cart:
-                    it_name = r['Item']
-                    it_qty = r['Qty']
-                    if it_name in stock_df['Item_Name'].values:
-                        idx_st = stock_df[stock_df['Item_Name'] == it_name].index[0]
-                        stock_df.loc[idx_st, 'Qty'] = max(0, int(stock_df.loc[idx_st, 'Qty']) - it_qty)
+                    for r in st.session_state.cart:
+                        it_name = r['Item']
+                        it_qty = r['Qty']
+                        if it_name in stock_df['Item_Name'].values:
+                            idx_st = stock_df[stock_df['Item_Name'] == it_name].index[0]
+                            stock_df.loc[idx_st, 'Qty'] = int(stock_df.loc[idx_st, 'Qty']) - int(it_qty)
 
-                orders_df = pd.concat([orders_df, pd.DataFrame([new_row])], ignore_index=True)
+                    orders_df = pd.concat([orders_df, pd.DataFrame([new_row])], ignore_index=True)
                 
-                cargo_df_save = pd.DataFrame({"Cargo_Name": cargo_companies_list})
-                with pd.ExcelWriter(DB_FILE, engine='openpyxl') as writer:
-                    orders_df.to_excel(writer, sheet_name="Orders", index=False)
-                    stock_df.to_excel(writer, sheet_name="Stock", index=False)
-                    expenses_df.to_excel(writer, sheet_name="Expenses", index=False)
-                    cargo_df_save.to_excel(writer, sheet_name="Cargo_Companies", index=False)
+                    cargo_df_save = pd.DataFrame({"Cargo_Name": cargo_companies_list})
+                    save_all_data(orders_df, stock_df, expenses_df, cargo_companies_list)
                 
-                st.session_state.cart = []
-                st.session_state.just_created_order = new_row
-                st.cache_data.clear()
-                st.success(f"🎉 تم حفظ الطلب رقم #{next_order_id} بنجاح وتم خصم المخزون تلقائياً!")
+                    st.session_state.cart = []
+                    st.session_state.just_created_order = new_row
+                    st.cache_data.clear()
+                    st.success(f"🎉 تم حفظ الطلب رقم #{next_order_id} بنجاح!")
 
-    # عرض فاتورة العميل مباشرة بعد حفظ الطلب
     if "just_created_order" in st.session_state and st.session_state.just_created_order:
         st.markdown("---")
         st.subheader("🖨️ فاتورة الطلب الجديد (جاهزة للطباعة والنسخ والتحميل):")
@@ -590,7 +674,6 @@ elif menu == "تتبع الشحنات والتحصيل":
             sel_cargo = st.selectbox("اختر شركة الشحن", cargo_companies_list)
             filtered_df = filtered_df[filtered_df['Cargo_Company'] == sel_cargo]
             
-            # خيار اختيار التاريخ إضافي وغير إجباري عند اختيار شركة الشحن
             use_cargo_date = st.checkbox("📅 تصفية شركة الشحن بتاريخ محدد (اختياري)", value=False)
             if use_cargo_date:
                 cargo_date = st.date_input("اختر التاريخ لشركة الشحن", datetime.date.today())
@@ -629,18 +712,37 @@ elif menu == "تتبع الشحنات والتحصيل":
         m3.metric("الطلبيات التي لم تسلم بعد", total_undelivered)
         
         st.markdown("---")
-        st.subheader("📋 جدول الشحنات والطلبيات المطابقة (اختر طلبية لتعديلها فوراً بالأسفل):")
+        st.subheader("📋 جدول الشحنات والطلبيات المطابقة:")
         
         if not filtered_df.empty:
             display_cols = ['Order_ID', 'Date', 'Customer', 'Phone', 'Region', 'Cargo_Company', 'Cargo_Barcode', 'Bags', 'Delivery_Status', 'Collection_Status', 'Products_Total', 'Shipping_Price', 'Total']
-            st.dataframe(filtered_df[display_cols], use_container_width=True)
             
+            # جعل الجدول تفاعلياً وحديثاً مع تحديد الصفوف
+            event = st.dataframe(
+                filtered_df[display_cols],
+                use_container_width=True,
+                selection_mode="single-row",
+                on_select="rerun",
+                key="orders_grid_select"
+            )
+            
+            selected_rows = event.selection.rows if hasattr(event, 'selection') else []
+            
+            # تحديد الطلبية المختارة إما عن طريق النقر في الجدول أو القائمة المنسدلة
             st.markdown("---")
             st.subheader("✏️ قسم التعديل السريع لحالة الطلبية (التوصيل، الدفع، والشحن):")
             
-            # خيار اختيار الطلب تفاعلياً مباشرة
             order_options_map = {row['Order_ID']: f"طلب #{row['Order_ID']} - العميل: {row['Customer']} (هاتف: {row['Phone']})" for idx, row in filtered_df.iterrows()}
-            chosen_order_id = st.selectbox("اختر رقم الطلبية من القائمة لتعديلها:", list(order_options_map.keys()), format_func=lambda x: order_options_map[x])
+            
+            default_index = 0
+            if selected_rows and len(selected_rows) > 0:
+                clicked_row_idx = selected_rows[0]
+                if clicked_row_idx < len(filtered_df):
+                    clicked_order_id = filtered_df.iloc[clicked_row_idx]['Order_ID']
+                    if clicked_order_id in list(order_options_map.keys()):
+                        default_index = list(order_options_map.keys()).index(clicked_order_id)
+
+            chosen_order_id = st.selectbox("اختر رقم الطلبية للتعديل الفوري:", list(order_options_map.keys()), index=default_index, format_func=lambda x: order_options_map[x])
             
             target_order_row = orders_df[orders_df['Order_ID'] == chosen_order_id].iloc[0]
             orig_idx = orders_df[orders_df['Order_ID'] == chosen_order_id].index[0]
@@ -680,11 +782,7 @@ elif menu == "تتبع الشحنات والتحصيل":
                     orders_df.loc[orig_idx, 'Cargo_Barcode'] = new_barcode_val
                     
                     cargo_df_save = pd.DataFrame({"Cargo_Name": cargo_companies_list})
-                    with pd.ExcelWriter(DB_FILE, engine='openpyxl') as writer:
-                        orders_df.to_excel(writer, sheet_name="Orders", index=False)
-                        stock_df.to_excel(writer, sheet_name="Stock", index=False)
-                        expenses_df.to_excel(writer, sheet_name="Expenses", index=False)
-                        cargo_df_save.to_excel(writer, sheet_name="Cargo_Companies", index=False)
+                    save_all_data(orders_df, stock_df, expenses_df, cargo_companies_list)
                     
                     st.cache_data.clear()
                     st.success(f"✅ تم تحديث الطلب رقم #{chosen_order_id} بنجاح!")
@@ -705,7 +803,6 @@ elif menu == "ورقة تجهيز الطلبيات":
         pick_df = orders_df.copy()
         pick_df['Date_Parsed'] = pd.to_datetime(pick_df['Date'], errors='coerce').dt.date
         
-        # استبعاد الطلبات التي أصبحت جاهزة للتسليم أو تم تسليمها لعدم تكرارها
         unprocessed_orders = pick_df[(pick_df['Date_Parsed'] == pick_date) & (~pick_df['Delivery_Status'].isin(["جاهز للتسليم", "تم التسليم لشركة الشحن", "تم تسليم العميل"]))]
         
         if not unprocessed_orders.empty:
@@ -745,11 +842,7 @@ elif menu == "ورقة تجهيز الطلبيات":
                             orders_df.loc[ord_idx_target, 'Cargo_Barcode'] = new_bc_input
                             
                             cargo_df_save = pd.DataFrame({"Cargo_Name": cargo_companies_list})
-                            with pd.ExcelWriter(DB_FILE, engine='openpyxl') as writer:
-                                orders_df.to_excel(writer, sheet_name="Orders", index=False)
-                                stock_df.to_excel(writer, sheet_name="Stock", index=False)
-                                expenses_df.to_excel(writer, sheet_name="Expenses", index=False)
-                                cargo_df_save.to_excel(writer, sheet_name="Cargo_Companies", index=False)
+                            save_all_data(orders_df, stock_df, expenses_df, cargo_companies_list)
                             st.cache_data.clear()
                             st.success(f"✅ تم حفظ الباركود للطلب #{order_id} بنجاح!")
                             st.rerun()
@@ -779,21 +872,16 @@ elif menu == "ورقة تجهيز الطلبيات":
                         st.success("🎉 تم تجهيز كافة الأصناف بالكامل!")
                         if st.button(f"🚀 اعتماد تجهيز الطلب #{order_id} وتحويله لـ (جاهز للتسليم)", key=f"btn_ready_{order_id}"):
                             idx_ord = orders_df[orders_df['Order_ID'] == order_id].index[0]
-                            # تحويل الحالة لـ (جاهز للتسليم) وإخفاء الطلب من القائمة
                             orders_df.loc[idx_ord, 'Delivery_Status'] = "جاهز للتسليم"
                             
                             cargo_df_save = pd.DataFrame({"Cargo_Name": cargo_companies_list})
-                            with pd.ExcelWriter(DB_FILE, engine='openpyxl') as writer:
-                                orders_df.to_excel(writer, sheet_name="Orders", index=False)
-                                stock_df.to_excel(writer, sheet_name="Stock", index=False)
-                                expenses_df.to_excel(writer, sheet_name="Expenses", index=False)
-                                cargo_df_save.to_excel(writer, sheet_name="Cargo_Companies", index=False)
+                            save_all_data(orders_df, stock_df, expenses_df, cargo_companies_list)
                             
                             st.cache_data.clear()
-                            st.success(f"✅ تم تحويل الطلب #{order_id} إلى (جاهز للتسليم) وتم حذفه من القائمة!")
+                            st.success(f"✅ تم تحويل الطلب #{order_id} إلى (جاهز للتسليم) وإخفاؤه من الشاشة!")
                             st.rerun()
                     else:
-                        st.info("💡 يرجى وضع علامة صح على كافة الأصناف للتحويل الحرمي للطلب.")
+                        st.info("💡 يرجى وضع علامة صح على كافة الأصناف للتحويل الفوري للطلب.")
         else:
             st.success("🎉 تم تجهيز كافة طلبات هذا اليوم بنجاح أو لا توجد طلبات معلقة!")
     else:
@@ -828,11 +916,7 @@ elif menu == "إدارة المخزون والجرد":
                     stock_df.loc[idx_st, 'Qty'] = max(0, cur_q - r_qty)
                 
                 cargo_df_save = pd.DataFrame({"Cargo_Name": cargo_companies_list})
-                with pd.ExcelWriter(DB_FILE, engine='openpyxl') as writer:
-                    orders_df.to_excel(writer, sheet_name="Orders", index=False)
-                    stock_df.to_excel(writer, sheet_name="Stock", index=False)
-                    expenses_df.to_excel(writer, sheet_name="Expenses", index=False)
-                    cargo_df_save.to_excel(writer, sheet_name="Cargo_Companies", index=False)
+                save_all_data(orders_df, stock_df, expenses_df, cargo_companies_list)
                 
                 st.cache_data.clear()
                 st.success(f"✅ تم تحديث مخزون المنتج ({r_item}) بنجاح!")
@@ -853,11 +937,7 @@ elif menu == "إدارة المخزون والجرد":
                     stock_df.loc[stock_df['Item_Name'] == it_name, 'Qty'] = actual_q
                 
                 cargo_df_save = pd.DataFrame({"Cargo_Name": cargo_companies_list})
-                with pd.ExcelWriter(DB_FILE, engine='openpyxl') as writer:
-                    orders_df.to_excel(writer, sheet_name="Orders", index=False)
-                    stock_df.to_excel(writer, sheet_name="Stock", index=False)
-                    expenses_df.to_excel(writer, sheet_name="Expenses", index=False)
-                    cargo_df_save.to_excel(writer, sheet_name="Cargo_Companies", index=False)
+                save_all_data(orders_df, stock_df, expenses_df, cargo_companies_list)
                 
                 st.cache_data.clear()
                 st.success("🎉 تمت تسوية المخزون واعتماد الجرد بنجاح!")
@@ -881,11 +961,7 @@ elif menu == "إدارة شركات الشحن":
                     cargo_companies_list.insert(0, "وصل لي")
                 
                 cargo_df_save = pd.DataFrame({"Cargo_Name": cargo_companies_list})
-                with pd.ExcelWriter(DB_FILE, engine='openpyxl') as writer:
-                    orders_df.to_excel(writer, sheet_name="Orders", index=False)
-                    stock_df.to_excel(writer, sheet_name="Stock", index=False)
-                    expenses_df.to_excel(writer, sheet_name="Expenses", index=False)
-                    cargo_df_save.to_excel(writer, sheet_name="Cargo_Companies", index=False)
+                save_all_data(orders_df, stock_df, expenses_df, cargo_companies_list)
                 
                 st.cache_data.clear()
                 st.success(f"✅ تمت إضافة شركة الشحن '{new_cargo_name}' بنجاح!")
@@ -964,14 +1040,14 @@ elif menu == "التعديل الجماعي الشامل":
         edited_orders_df = st.data_editor(orders_df, num_rows="dynamic", use_container_width=True, key="batch_order_editor")
         if st.button("💾 حفظ جميع التعديلات دفعة واحدة"):
             try:
+                original_items = orders_df.set_index("Order_ID")["Items_Detail"].astype(str).to_dict()
+                edited_items = edited_orders_df.set_index("Order_ID")["Items_Detail"].astype(str).to_dict()
+                changed_item_orders = [oid for oid, value in edited_items.items() if oid in original_items and value != original_items[oid]]
+                if changed_item_orders:
+                    st.error("لم يتم الحفظ: تعديل أصناف الفاتورة من الجدول الجماعي قد يسبب اختلاف المخزون. استخدم قسم «تعديل وحذف الفواتير» لتعديل الأصناف مع تحديث المخزون تلقائيًا.")
+                    st.stop()
                 edited_orders_df['Total'] = pd.to_numeric(edited_orders_df['Products_Total'], errors='coerce').fillna(0) + pd.to_numeric(edited_orders_df['Shipping_Price'], errors='coerce').fillna(0)
-                cargo_df_save = pd.DataFrame({"Cargo_Name": cargo_companies_list})
-                with pd.ExcelWriter(DB_FILE, engine='openpyxl') as writer:
-                    edited_orders_df.to_excel(writer, sheet_name="Orders", index=False)
-                    stock_df.to_excel(writer, sheet_name="Stock", index=False)
-                    expenses_df.to_excel(writer, sheet_name="Expenses", index=False)
-                    cargo_df_save.to_excel(writer, sheet_name="Cargo_Companies", index=False)
-                st.cache_data.clear()
+                save_all_data(edited_orders_df, stock_df, expenses_df, cargo_companies_list)
                 st.success("🎉 تم حفظ جميع التعديلات وتحديث قاعدة البيانات بنجاح!")
                 st.rerun()
             except Exception as e:
@@ -1078,11 +1154,7 @@ elif menu == "تعديل وحذف الفواتير":
                 orders_df.loc[orders_df['Order_ID'] == edit_order_id, 'Collection_Status'] = new_coll_status
 
                 cargo_df_save = pd.DataFrame({"Cargo_Name": cargo_companies_list})
-                with pd.ExcelWriter(DB_FILE, engine='openpyxl') as writer:
-                    orders_df.to_excel(writer, sheet_name="Orders", index=False)
-                    stock_df.to_excel(writer, sheet_name="Stock", index=False)
-                    expenses_df.to_excel(writer, sheet_name="Expenses", index=False)
-                    cargo_df_save.to_excel(writer, sheet_name="Cargo_Companies", index=False)
+                save_all_data(orders_df, stock_df, expenses_df, cargo_companies_list)
                 st.cache_data.clear()
                 st.success("✅ تم تحديث بيانات الفاتورة بنجاح!")
                 st.rerun()
@@ -1100,16 +1172,19 @@ elif menu == "تعديل وحذف الفواتير":
                     st.write(f"• {item_dict['Item']} &nbsp;|&nbsp; **الكمية:** {item_dict['Qty']}")
                 with col_item_info2:
                     if st.button("🗑️ حذف", key=f"del_item_inv_{edit_order_id}_{idx}"):
-                        current_parsed_items.pop(idx)
+                        new_items = current_parsed_items.copy()
+                        new_items.pop(idx)
+                        adjusted_stock, stock_error = adjust_stock_for_order(stock_df, current_parsed_items, new_items)
+                        if stock_error:
+                            st.error(stock_error)
+                            st.stop()
+                        stock_df = adjusted_stock
+                        current_parsed_items = new_items
                         new_items_str = " | ".join([f"{x['Item']} (الكمية: {x['Qty']})" for x in current_parsed_items]) if current_parsed_items else "لا توجد أصناف"
                         orders_df.loc[orders_df['Order_ID'] == edit_order_id, 'Items_Detail'] = new_items_str
                         
                         cargo_df_save = pd.DataFrame({"Cargo_Name": cargo_companies_list})
-                        with pd.ExcelWriter(DB_FILE, engine='openpyxl') as writer:
-                            orders_df.to_excel(writer, sheet_name="Orders", index=False)
-                            stock_df.to_excel(writer, sheet_name="Stock", index=False)
-                            expenses_df.to_excel(writer, sheet_name="Expenses", index=False)
-                            cargo_df_save.to_excel(writer, sheet_name="Cargo_Companies", index=False)
+                        save_all_data(orders_df, stock_df, expenses_df, cargo_companies_list)
                         st.cache_data.clear()
                         st.success("✅ تم حذف الصنف بنجاح!")
                         st.rerun()
@@ -1121,29 +1196,34 @@ elif menu == "تعديل وحذف الفواتير":
             add_sel_qty = st.number_input("الكمية", min_value=1, value=1, key=f"add_item_qty_{edit_order_id}")
             
             if st.form_submit_button("➕ إضافة المنتج إلى الفاتورة"):
-                current_parsed_items.append({"Item": add_sel_item, "Qty": add_sel_qty})
+                new_items = current_parsed_items.copy()
+                new_items.append({"Item": add_sel_item, "Qty": int(add_sel_qty)})
+                adjusted_stock, stock_error = adjust_stock_for_order(stock_df, current_parsed_items, new_items)
+                if stock_error:
+                    st.error(stock_error)
+                    st.stop()
+                stock_df = adjusted_stock
+                current_parsed_items = new_items
                 new_items_str = " | ".join([f"{x['Item']} (الكمية: {x['Qty']})" for x in current_parsed_items])
                 orders_df.loc[orders_df['Order_ID'] == edit_order_id, 'Items_Detail'] = new_items_str
                 
                 cargo_df_save = pd.DataFrame({"Cargo_Name": cargo_companies_list})
-                with pd.ExcelWriter(DB_FILE, engine='openpyxl') as writer:
-                    orders_df.to_excel(writer, sheet_name="Orders", index=False)
-                    stock_df.to_excel(writer, sheet_name="Stock", index=False)
-                    expenses_df.to_excel(writer, sheet_name="Expenses", index=False)
-                    cargo_df_save.to_excel(writer, sheet_name="Cargo_Companies", index=False)
+                save_all_data(orders_df, stock_df, expenses_df, cargo_companies_list)
                 st.cache_data.clear()
                 st.success("✅ تمت إضافة المنتج بنجاح!")
                 st.rerun()
 
         st.markdown("---")
         if st.button("🗑️ حذف الفاتورة بالكامل نهائياً"):
+            old_items = parse_items_to_list(target_row["Items_Detail"])
+            adjusted_stock, stock_error = adjust_stock_for_order(stock_df, old_items, [])
+            if stock_error:
+                st.error(stock_error)
+                st.stop()
+            stock_df = adjusted_stock
             orders_df = orders_df[orders_df['Order_ID'] != edit_order_id]
             cargo_df_save = pd.DataFrame({"Cargo_Name": cargo_companies_list})
-            with pd.ExcelWriter(DB_FILE, engine='openpyxl') as writer:
-                orders_df.to_excel(writer, sheet_name="Orders", index=False)
-                stock_df.to_excel(writer, sheet_name="Stock", index=False)
-                expenses_df.to_excel(writer, sheet_name="Expenses", index=False)
-                cargo_df_save.to_excel(writer, sheet_name="Cargo_Companies", index=False)
+            save_all_data(orders_df, stock_df, expenses_df, cargo_companies_list)
             st.cache_data.clear()
             st.success("🗑️ تم حذف الفاتورة بنجاح!")
             st.rerun()
@@ -1163,11 +1243,7 @@ elif menu == "إدارة المصروفات":
             new_row = {"Expense_ID": new_exp_id, "Date": str(exp_date), "Category": exp_category, "Amount": exp_amount, "Description": exp_desc}
             expenses_df = pd.concat([expenses_df, pd.DataFrame([new_row])], ignore_index=True)
             cargo_df_save = pd.DataFrame({"Cargo_Name": cargo_companies_list})
-            with pd.ExcelWriter(DB_FILE, engine='openpyxl') as writer:
-                orders_df.to_excel(writer, sheet_name="Orders", index=False)
-                stock_df.to_excel(writer, sheet_name="Stock", index=False)
-                expenses_df.to_excel(writer, sheet_name="Expenses", index=False)
-                cargo_df_save.to_excel(writer, sheet_name="Cargo_Companies", index=False)
+            save_all_data(orders_df, stock_df, expenses_df, cargo_companies_list)
             st.cache_data.clear()
             st.success("✅ تم حفظ المصروف بنجاح!")
             st.rerun()
@@ -1179,19 +1255,22 @@ elif menu == "التقرير المالي التفصيلي":
     orders_df, stock_df, expenses_df, _ = load_data()
     
     total_products_value = orders_df['Products_Total'].sum() if not orders_df.empty else 0.0
-    collected_products_total = orders_df[orders_df['Collection_Status'] == 'مدفوع بالكامل']['Products_Total'].sum() if not orders_df.empty else 0.0
+    collected_products_total = orders_df[orders_df['Order_Payment'] == 'تم الدفع']['Products_Total'].sum() if not orders_df.empty else 0.0
+    collected_shipping_total = orders_df[orders_df['Shipping_Payment'] == 'تم دفع الشحن']['Shipping_Price'].sum() if not orders_df.empty else 0.0
+    pending_products_total = orders_df[orders_df['Order_Payment'] != 'تم الدفع']['Products_Total'].sum() if not orders_df.empty else 0.0
+    pending_shipping_total = orders_df[orders_df['Shipping_Payment'] != 'تم دفع الشحن']['Shipping_Price'].sum() if not orders_df.empty else 0.0
     total_shipping = orders_df['Shipping_Price'].sum() if not orders_df.empty else 0.0
-    total_expenses = expenses_df['Amount'].sum() if not expenses_df.empty else 0.0
+    total_expenses = pd.to_numeric(expenses_df['Amount'], errors='coerce').fillna(0).sum() if not expenses_df.empty else 0.0
+    total_collected_cash = collected_products_total + collected_shipping_total
+    actual_treasury = total_collected_cash - total_expenses
     
-    actual_treasury = collected_products_total - total_expenses
-
     m1, m2, m3, m4 = st.columns(4)
     m1.metric("إجمالي مبيعات المنتجات", f"{total_products_value:.3f} ر.ع")
-    m2.metric("المبالغ المحصلة فعلياً", f"{collected_products_total:.3f} ر.ع")
-    m3.metric("المصروفات", f"{total_expenses:.3f} ر.ع")
-    m4.metric("💰 السيولة الفعلية بالخزينة", f"{actual_treasury:.3f} ر.ع")
+    m2.metric("إجمالي المحصل (منتجات + شحن)", f"{total_collected_cash:.3f} ر.ع")
+    m3.metric("إجمالي المصروفات المسجلة", f"{total_expenses:.3f} ر.ع")
+    m4.metric("💰 صافي التدفق النقدي المسجل", f"{actual_treasury:.3f} ر.ع")
+    st.caption(f"مستحقات المنتجات غير المحصلة: {pending_products_total:.3f} ر.ع | الشحن غير المحصل: {pending_shipping_total:.3f} ر.ع | إجمالي الشحن: {total_shipping:.3f} ر.ع. هذا تقدير مبني على حالات الدفع المسجلة والمصروفات المسجلة، وليس رصيدًا بنكيًا مباشرًا.")
     
-    st.info(f"💡 **تنويه:** جميع حسابات الخزينة تعتمد حصراً على إيرادات المنتجات الفعلية (بدون سعر الشحن) مطروحاً منها إجمالي المصروفات.")
     st.markdown("---")
     cargo_summary = get_cargo_summary_df(orders_df)
     if not cargo_summary.empty:
