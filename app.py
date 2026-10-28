@@ -250,6 +250,7 @@ def _validate_workbook(path):
 def save_all_data(orders_df, stock_df, expenses_df, cargo_companies_list):
     """Save atomically, validate the new workbook, and back up the previous database first."""
     cargo_df_save = pd.DataFrame({"Cargo_Name": cargo_companies_list})
+    movements = st.session_state.get("stock_movements_df", pd.DataFrame(columns=["DateTime", "Item_Name", "Operation", "Quantity", "Before_Qty", "After_Qty", "Note"]))
     db_dir = os.path.dirname(os.path.abspath(DB_FILE))
     os.makedirs(db_dir, exist_ok=True)
     fd, temp_path = tempfile.mkstemp(suffix=".xlsx", dir=db_dir)
@@ -260,6 +261,7 @@ def save_all_data(orders_df, stock_df, expenses_df, cargo_companies_list):
             stock_df.to_excel(writer, sheet_name="Stock", index=False)
             expenses_df.to_excel(writer, sheet_name="Expenses", index=False)
             cargo_df_save.to_excel(writer, sheet_name="Cargo_Companies", index=False)
+            movements.to_excel(writer, sheet_name="Stock_Movements", index=False)
         _validate_workbook(temp_path)
         if os.path.exists(DB_FILE) and os.path.getsize(DB_FILE) > 0:
             _validate_workbook(DB_FILE)
@@ -274,6 +276,8 @@ def save_all_data(orders_df, stock_df, expenses_df, cargo_companies_list):
         if os.path.exists(temp_path):
             os.remove(temp_path)
     st.cache_data.clear()
+    st.session_state["save_success_message"] = "✅ تم حفظ التغييرات في قاعدة البيانات بنجاح."
+    st.session_state["save_success_time"] = datetime.datetime.now().timestamp()
 
 
 def init_db():
@@ -300,6 +304,7 @@ def init_db():
             stock.to_excel(writer, sheet_name="Stock", index=False)
             expenses.to_excel(writer, sheet_name="Expenses", index=False)
             cargo_df.to_excel(writer, sheet_name="Cargo_Companies", index=False)
+            pd.DataFrame(columns=["DateTime", "Item_Name", "Operation", "Quantity", "Before_Qty", "After_Qty", "Note"]).to_excel(writer, sheet_name="Stock_Movements", index=False)
         _validate_workbook(DB_FILE)
         with open(INITIALIZED_MARKER, "w", encoding="utf-8") as marker:
             marker.write(datetime.datetime.now().isoformat())
@@ -327,6 +332,8 @@ def load_data():
         stock = pd.read_excel(xls, sheet_name="Stock")
         expenses = pd.read_excel(xls, sheet_name="Expenses") if "Expenses" in xls.sheet_names else pd.DataFrame(columns=["Expense_ID", "Date", "Category", "Amount", "Description"])
         cargo_df = pd.read_excel(xls, sheet_name="Cargo_Companies") if "Cargo_Companies" in xls.sheet_names else pd.DataFrame({"Cargo_Name": DEFAULT_CARGO_COMPANIES})
+        movements = pd.read_excel(xls, sheet_name="Stock_Movements") if "Stock_Movements" in xls.sheet_names else pd.DataFrame(columns=["DateTime", "Item_Name", "Operation", "Quantity", "Before_Qty", "After_Qty", "Note"])
+        st.session_state["stock_movements_df"] = movements
     except Exception as exc:
         # Do not attempt automatic re-initialization after a read failure: that can erase records.
         raise RuntimeError(
@@ -440,6 +447,11 @@ def render_invoice_snippet(order_row):
     return receipt_html
 
 orders_df, stock_df, expenses_df, cargo_companies_list = load_data()
+
+_success_msg = st.session_state.get("save_success_message")
+_success_time = st.session_state.get("save_success_time", 0)
+if _success_msg and datetime.datetime.now().timestamp() - _success_time < 5:
+    st.success(_success_msg)
 
 st.sidebar.markdown('<p class="sidebar-title">🌟 لبانور - لوحة التحكم الإدارية</p>', unsafe_allow_html=True)
 st.sidebar.markdown('<p class="version-tag">📌 الإصدار المحدث: v6:10pm 28-10-2026</p>', unsafe_allow_html=True)
@@ -604,9 +616,18 @@ elif menu == "تسجيل طلب جديد":
         st.write("")
         st.write("")
         if st.button("➕ إضافة للسلة"):
-            st.session_state.cart.append({"Item": sel_item, "Qty": sel_qty})
-            st.success("تمت الإضافة!")
-            st.rerun()
+            stock_rows = stock_df.loc[stock_df["Item_Name"].astype(str) == str(sel_item), "Qty"]
+            stock_value = pd.to_numeric(stock_rows.iloc[0], errors="coerce") if not stock_rows.empty else 0
+            available_qty = int(stock_value) if pd.notna(stock_value) else 0
+            already_in_cart = sum(int(x["Qty"]) for x in st.session_state.cart if str(x["Item"]) == str(sel_item))
+            remaining_qty = available_qty - already_in_cart
+            if int(sel_qty) > remaining_qty:
+                st.error(f"❌ لا يمكن إضافة الصنف إلى الفاتورة. الصنف: {sel_item} — المتاح بالمخزون: {available_qty}، الموجود بالفعل في السلة: {already_in_cart}، المتبقي المتاح: {remaining_qty}، والكمية المطلوبة: {int(sel_qty)}.")
+            else:
+                st.session_state.cart.append({"Item": sel_item, "Qty": int(sel_qty)})
+                st.session_state["save_success_message"] = f"✅ تمت إضافة {sel_item} إلى سلة الفاتورة."
+                st.session_state["save_success_time"] = datetime.datetime.now().timestamp()
+                st.rerun()
 
     if st.session_state.cart:
         st.markdown("🛒 **محتويات السلة الحالية:**")
@@ -933,18 +954,29 @@ elif menu == "إدارة المخزون والجرد":
             
             if st.form_submit_button("💾 تنفيذ وتحديث المخزون"):
                 idx_st = stock_df[stock_df['Item_Name'] == r_item].index[0]
-                cur_q = int(stock_df.loc[idx_st, 'Qty'])
-                if r_action == "إضافة إلى المخزون (تعزيز)":
-                    stock_df.loc[idx_st, 'Qty'] = cur_q + r_qty
+                cur_q = int(pd.to_numeric(stock_df.loc[idx_st, 'Qty'], errors='coerce') or 0)
+                if r_action == "سحب من المخزون" and int(r_qty) > cur_q:
+                    st.error(f"❌ لا يمكن سحب {int(r_qty)}؛ الرصيد الحالي للصنف {r_item} هو {cur_q} فقط.")
                 else:
-                    stock_df.loc[idx_st, 'Qty'] = max(0, cur_q - r_qty)
-                
-                cargo_df_save = pd.DataFrame({"Cargo_Name": cargo_companies_list})
-                save_all_data(orders_df, stock_df, expenses_df, cargo_companies_list)
-                
-                st.cache_data.clear()
-                st.success(f"✅ تم تحديث مخزون المنتج ({r_item}) بنجاح!")
-                st.rerun()
+                    new_q = cur_q + int(r_qty) if r_action == "إضافة إلى المخزون (تعزيز)" else cur_q - int(r_qty)
+                    stock_df.loc[idx_st, 'Qty'] = new_q
+                    movements = st.session_state.get("stock_movements_df", pd.DataFrame(columns=["DateTime", "Item_Name", "Operation", "Quantity", "Before_Qty", "After_Qty", "Note"]))
+                    movement = {"DateTime": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "Item_Name": r_item,
+                                "Operation": "إضافة للمخزون" if r_action == "إضافة إلى المخزون (تعزيز)" else "سحب من المخزون",
+                                "Quantity": int(r_qty), "Before_Qty": cur_q, "After_Qty": new_q, "Note": "تعزيز/سحب يدوي"}
+                    st.session_state["stock_movements_df"] = pd.concat([movements, pd.DataFrame([movement])], ignore_index=True)
+                    save_all_data(orders_df, stock_df, expenses_df, cargo_companies_list)
+                    st.session_state["save_success_message"] = f"✅ تم تنفيذ العملية بنجاح: {movement['Operation']} — {r_item} — الكمية {int(r_qty)}. الرصيد السابق {cur_q}، الرصيد الجديد {new_q}."
+                    st.session_state["save_success_time"] = datetime.datetime.now().timestamp()
+                    st.rerun()
+
+        st.markdown("### 📋 سجل حركات المخزون (لتجنب تكرار الإضافة)")
+        st.caption("يسجل هذا الجدول كل عملية إضافة أو سحب مع وقتها والرصيد قبل العملية وبعدها. راجع آخر العمليات قبل إضافة الكمية مرة أخرى.")
+        movement_history = st.session_state.get("stock_movements_df", pd.DataFrame())
+        if not movement_history.empty:
+            st.dataframe(movement_history.sort_values("DateTime", ascending=False), use_container_width=True, hide_index=True)
+        else:
+            st.info("لا توجد حركات مخزون مسجلة بعد. ستظهر هنا العمليات الجديدة بعد حفظها.")
                 
     with tab2:
         st.subheader("تسوية المخزون بعد الجرد الفعلي")
