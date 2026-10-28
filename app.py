@@ -239,7 +239,7 @@ def load_data():
 orders_df, stock_df, expenses_df, cargo_companies_list = load_data()
 
 st.sidebar.markdown('<p class="sidebar-title">🌟 لبانور - لوحة التحكم الإدارية</p>', unsafe_allow_html=True)
-st.sidebar.markdown('<p class="version-tag">📌 الإصدار المحدث: v4:00pm 27-10-2026</p>', unsafe_allow_html=True)
+st.sidebar.markdown('<p class="version-tag">📌 الإصدار المحدث: v4:15pm 27-10-2026</p>', unsafe_allow_html=True)
 
 if st.sidebar.button("🔄 تحديث البيانات مع السيرفر"):
     st.cache_data.clear()
@@ -562,7 +562,6 @@ elif menu == "تتبع الشحنات والتحصيل":
             
         filtered_df = orders_df.copy()
         
-        # تنفيذ الفلترة بناءً على اختيار المستخدم
         if search_by == "التاريخ المحدد":
             filter_date = st.date_input("اختر التاريخ المطلوب", datetime.date.today())
             filtered_df['Date_Parsed'] = pd.to_datetime(filtered_df['Date'], errors='coerce').dt.date
@@ -588,7 +587,6 @@ elif menu == "تتبع الشحنات والتحصيل":
         if collection_filter != "الكل":
             filtered_df = filtered_df[filtered_df['Collection_Status'] == collection_filter]
             
-        # إحصائيات سريعة أسفل خيارات البحث
         total_due_amt = filtered_df[filtered_df['Collection_Status'] == 'قيد التحصيل']['Products_Total'].sum()
         total_undelivered = len(filtered_df[filtered_df['Delivery_Status'] != 'تم تسليم العميل'])
         
@@ -1161,8 +1159,11 @@ elif menu == "تعديل وحذف الفواتير":
                 updated_items_list = []
                 for _, row_it in edited_items_df.iterrows():
                     iname = str(row_it.get('اسم المنتج', '')).strip()
-                    iqty = int(row_it.get('الكمية', 1))
-                    if iname:
+                    try:
+                        iqty = int(row_it.get('الكمية', 1))
+                    except:
+                        iqty = 1
+                    if iname and iname.lower() != 'nan':
                         updated_items_list.append(f"{iname} (الكمية: {iqty})")
                 
                 new_items_detail_str = " | ".join(updated_items_list)
