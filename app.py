@@ -241,7 +241,7 @@ def load_data():
 orders_df, stock_df, expenses_df, cargo_companies_list = load_data()
 
 st.sidebar.markdown('<p class="sidebar-title">🌟 لبانور - لوحة التحكم الإدارية</p>', unsafe_allow_html=True)
-st.sidebar.markdown('<p class="version-tag">📌 الإصدار المحدث: v4:45pm 28-10-2026</p>', unsafe_allow_html=True)
+st.sidebar.markdown('<p class="version-tag">📌 الإصدار المحدث: v5:00pm 28-10-2026</p>', unsafe_allow_html=True)
 
 if st.sidebar.button("🔄 تحديث البيانات مع السيرفر"):
     st.cache_data.clear()
@@ -502,6 +502,62 @@ elif menu == "تتبع الشحنات والتحصيل":
         if not filtered_df.empty:
             display_cols = ['Order_ID', 'Date', 'Customer', 'Phone', 'Region', 'Cargo_Company', 'Cargo_Barcode', 'Bags', 'Delivery_Status', 'Collection_Status', 'Products_Total', 'Shipping_Price', 'Total']
             st.dataframe(filtered_df[display_cols], use_container_width=True)
+            
+            st.markdown("---")
+            st.subheader("✏️ قسم التعديل السريع لحالة الطلبية (التوصيل، الدفع، والشحن):")
+            
+            with st.form("quick_update_order_form"):
+                order_ids_list = filtered_df['Order_ID'].tolist()
+                chosen_order_id = st.selectbox("اختر رقم الطلبية (كود الطلب) للتعديل:", order_ids_list)
+                
+                target_order_row = orders_df[orders_df['Order_ID'] == chosen_order_id].iloc[0]
+                orig_idx = orders_df[orders_df['Order_ID'] == chosen_order_id].index[0]
+                
+                st.info(f"📌 الطلب المختار: #{chosen_order_id} - العميل: {target_order_row['Customer']} (الهاتف: {target_order_row['Phone']})")
+                
+                q_col1, q_col2, q_col3, q_col4 = st.columns(4)
+                
+                delivery_status_options = ["قيد التحضير", "تم التسليم لشركة الشحن", "جاري التوصيل", "تم تسليم العميل", "لم يتم التوصيل", "مرتجع"]
+                cur_d_stat = str(target_order_row.get('Delivery_Status', 'قيد التحضير'))
+                d_i = delivery_status_options.index(cur_d_stat) if cur_d_stat in delivery_status_options else 0
+                new_d_stat = q_col1.selectbox("حالة التوصيل", delivery_status_options, index=d_i)
+                
+                order_pay_options = ["لم يتم الدفع", "تم الدفع"]
+                cur_o_pay = str(target_order_row.get('Order_Payment', 'لم يتم الدفع'))
+                o_i = order_pay_options.index(cur_o_pay) if cur_o_pay in order_pay_options else 0
+                new_o_pay = q_col2.selectbox("دفع الطلب", order_pay_options, index=o_i)
+                
+                shipping_pay_options = ["لم يتم دفع الشحن", "تم دفع الشحن"]
+                cur_s_pay = str(target_order_row.get('Shipping_Payment', 'لم يتم دفع الشحن'))
+                s_i = shipping_pay_options.index(cur_s_pay) if cur_s_pay in shipping_pay_options else 0
+                new_s_pay = q_col3.selectbox("دفع الشحن", shipping_pay_options, index=s_i)
+                
+                collection_options = ["قيد التحصيل", "مدفوع بالكامل"]
+                cur_coll = str(target_order_row.get('Collection_Status', 'قيد التحصيل'))
+                c_i = collection_options.index(cur_coll) if cur_coll in collection_options else 0
+                new_coll = q_col4.selectbox("حالة التحصيل", collection_options, index=c_i)
+                
+                new_barcode_val = st.text_input("تعديل باركود شركة الشحن", value=str(target_order_row.get('Cargo_Barcode', '')))
+                
+                if st.form_submit_button("💾 حفظ وتحديث حالة الطلبية فوراً"):
+                    orders_df.loc[orig_idx, 'Delivery_Status'] = new_d_stat
+                    orders_df.loc[orig_idx, 'Order_Payment'] = new_o_pay
+                    orders_df.loc[orig_idx, 'Shipping_Payment'] = new_s_pay
+                    orders_df.loc[orig_idx, 'Collection_Status'] = new_coll
+                    orders_df.loc[orig_idx, 'Cargo_Barcode'] = new_barcode_val
+                    
+                    cargo_df_save = pd.DataFrame({"Cargo_Name": cargo_companies_list})
+                    with pd.ExcelWriter(DB_FILE, engine='openpyxl') as writer:
+                        orders_df.to_excel(writer, sheet_name="Orders", index=False)
+                        stock_df.to_excel(writer, sheet_name="Stock", index=False)
+                        expenses_df.to_excel(writer, sheet_name="Expenses", index=False)
+                        cargo_df_save.to_excel(writer, sheet_name="Cargo_Companies", index=False)
+                    
+                    st.cache_data.clear()
+                    st.success(f"✅ تم تحديث الطلب رقم #{chosen_order_id} بنجاح!")
+                    st.rerun()
+        else:
+            st.warning("لا توجد طلبيات مطابقة لمعايير البحث المحددة.")
     else:
         st.info("لا توجد طلبيات مسجلة في النظام بعد.")
 
