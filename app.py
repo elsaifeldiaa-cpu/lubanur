@@ -21,7 +21,7 @@ def get_secret(name, default=""):
         value = st.secrets.get(name, default)
     except Exception:
         value = os.environ.get(name, default)
-    return str(value or default).strip()
+    return str(value or default).str.strip()
 
 ADMIN_PASSWORD = get_secret("ADMIN_PASSWORD", get_secret("APP_PASSWORD", ""))
 VIEWER_PASSWORD = get_secret("VIEWER_PASSWORD", "")
@@ -33,50 +33,65 @@ if not ADMIN_PASSWORD or not VIEWER_PASSWORD:
 if "user_role" not in st.session_state:
     st.session_state.user_role = None
 
-# === التصميم الجديد والمستقر لشاشة تسجيل الدخول (بدون نماذج معطلة) ===
+# === التصميم الجديد والمحسن كلياً لشاشة تسجيل الدخول (مركزية ومضغوطة) ===
 if st.session_state.user_role is None:
     st.markdown("""
         <style>
-        .login-box {
-            max-width: 450px;
-            margin: 80px auto;
-            padding: 35px;
+        .stApp {
+            background-color: #f4f6f9;
+        }
+        .login-card {
             background: #ffffff;
-            border-radius: 14px;
-            box-shadow: 0 6px 20px rgba(0,0,0,0.1);
+            padding: 40px 30px;
+            border-radius: 16px;
+            box-shadow: 0 8px 24px rgba(0,0,0,0.08);
+            max-width: 420px;
+            margin: 60px auto;
             direction: rtl;
             text-align: right;
+            border-top: 5px solid #007bff;
+        }
+        .login-title {
+            text-align: center;
+            color: #2c3e50;
+            font-size: 22px;
+            font-weight: bold;
+            margin-bottom: 8px;
+        }
+        .login-subtitle {
+            text-align: center;
+            color: #666;
+            font-size: 13px;
+            margin-bottom: 25px;
         }
         </style>
+        <div class="login-card">
+            <div class="login-title">🔐 نظام لبانور - تسجيل الدخول</div>
+            <div class="login-subtitle">السيف والضياء للاستثمار الدولي</div>
     """, unsafe_allow_html=True)
 
-    col1, col2, col3 = st.columns([1, 2, 1])
-    with col2:
-        st.markdown("<div class='login-box'>", unsafe_allow_html=True)
-        st.markdown("<h2 style='text-align: center; color: #2c3e50;'>🔐 تسجيل الدخول لنظام لبانور</h2>", unsafe_allow_html=True)
-        st.markdown("<p style='text-align: center; color: #666; font-size: 14px;'>الرجاء إدخال كلمة المرور للمتابعة</p>", unsafe_allow_html=True)
-        
-        entered_pwd = st.text_input("كلمة المرور", type="password", key="login_pass_input")
-        
-        st.markdown("<div style='margin-top: 20px;'></div>", unsafe_allow_html=True)
-        login_clicked = st.button("دخول للنظام", use_container_width=True)
-        
-        if login_clicked:
-            if not entered_pwd:
-                st.warning("⚠️ الرجاء إدخال كلمة المرور أولاً.")
-            elif entered_pwd == ADMIN_PASSWORD:
-                st.session_state.user_role = "admin"
-                st.session_state.authenticated = True
-                st.session_state.login_event_pending = "تسجيل دخول المدير"
-                st.rerun()
-            elif entered_pwd == VIEWER_PASSWORD:
-                st.session_state.user_role = "viewer"
-                st.session_state.authenticated = True
-                st.session_state.login_event_pending = "تسجيل دخول مستخدم العرض"
-                st.rerun()
-            else:
-                st.error("❌ كلمة المرور غير صحيحة، حاول مرة أخرى.")
-        st.markdown("</div>", unsafe_allow_html=True)
+    entered_pwd = st.text_input("كلمة المرور الإدارية أو الخاصة بالعرض", type="password", key="login_pass_field")
+    st.markdown("<div style='height: 10px;'></div>", unsafe_allow_html=True)
+    
+    login_btn = st.button("🚀 تسجيل الدخول للنظام", use_container_width=True)
+    
+    st.markdown("</div>", unsafe_allow_html=True)
+
+    if login_btn:
+        if not entered_pwd:
+            st.warning("⚠️ الرجاء إدخال كلمة المرور أولاً.")
+        elif entered_pwd == ADMIN_PASSWORD:
+            st.session_state.user_role = "admin"
+            st.session_state.authenticated = True
+            st.session_state.login_event_pending = "تسجيل دخول المدير"
+            st.rerun()
+        elif entered_pwd == VIEWER_PASSWORD:
+            st.session_state.user_role = "viewer"
+            st.session_state.authenticated = True
+            st.session_state.login_event_pending = "تسجيل دخول مستخدم العرض"
+            st.rerun()
+        else:
+            st.error("❌ كلمة المرور غير صحيحة.")
     st.stop()
 
 IS_ADMIN = st.session_state.user_role == "admin"
@@ -1404,4 +1419,231 @@ elif menu == "تعديل وحذف الفواتير":
             e_cargo = st.selectbox("شركة الشحن", cargo_companies_list, index=cargo_idx)
             
             e_bags = st.number_input("عدد الأكياس", min_value=0, value=int(target_row.get('Bags', 1)))
-            e_prod_tot
+            e_prod_tot = st.number_input("قيمة المنتجات (OMR)", value=float(target_row['Products_Total']))
+            e_ship_p = st.number_input("سعر الشحن (OMR)", value=float(target_row['Shipping_Price']))
+            e_barcode = st.text_input("باركود شركة الشحن", value=str(target_row.get('Cargo_Barcode', '')))
+            
+            cur_ord_pay = str(target_row.get('Order_Payment', 'لم يتم الدفع'))
+            cur_shp_pay = str(target_row.get('Shipping_Payment', 'لم يتم دفع الشحن'))
+            
+            ord_pay_list = ["لم يتم الدفع", "تم الدفع"]
+            o_idx = ord_pay_list.index(cur_ord_pay) if cur_ord_pay in ord_pay_list else 0
+            e_ord_pay = st.selectbox("حالة دفع الطلب", ord_pay_list, index=o_idx)
+            
+            shp_pay_list = ["لم يتم دفع الشحن", "تم دفع الشحن"]
+            s_idx = shp_pay_list.index(cur_shp_pay) if cur_shp_pay in shp_pay_list else 0
+            e_shp_pay = st.selectbox("حالة دفع قيمة الشحن", shp_pay_list, index=s_idx)
+            
+            submitted_main_edit = st.form_submit_button("💾 حفظ البيانات الأساسية للفاتورة")
+            if submitted_main_edit:
+                orders_df.loc[orders_df['Order_ID'] == edit_order_id, 'Customer'] = e_cust
+                orders_df.loc[orders_df['Order_ID'] == edit_order_id, 'Phone'] = e_phone
+                orders_df.loc[orders_df['Order_ID'] == edit_order_id, 'Region'] = e_region
+                orders_df.loc[orders_df['Order_ID'] == edit_order_id, 'Cargo_Company'] = e_cargo
+                orders_df.loc[orders_df['Order_ID'] == edit_order_id, 'Bags'] = e_bags
+                orders_df.loc[orders_df['Order_ID'] == edit_order_id, 'Products_Total'] = e_prod_tot
+                orders_df.loc[orders_df['Order_ID'] == edit_order_id, 'Shipping_Price'] = e_ship_p
+                orders_df.loc[orders_df['Order_ID'] == edit_order_id, 'Total'] = e_prod_tot + e_ship_p
+                orders_df.loc[orders_df['Order_ID'] == edit_order_id, 'Cargo_Barcode'] = e_barcode
+                orders_df.loc[orders_df['Order_ID'] == edit_order_id, 'Order_Payment'] = e_ord_pay
+                orders_df.loc[orders_df['Order_ID'] == edit_order_id, 'Shipping_Payment'] = e_shp_pay
+                
+                new_coll_status = "مدفوع بالكامل" if e_ord_pay == "تم الدفع" else "قيد التحصيل"
+                orders_df.loc[orders_df['Order_ID'] == edit_order_id, 'Collection_Status'] = new_coll_status
+
+                cargo_df_save = pd.DataFrame({"Cargo_Name": cargo_companies_list})
+                save_all_data(orders_df, stock_df, expenses_df, cargo_companies_list)
+                st.cache_data.clear()
+                st.success("✅ تم تحديث بيانات الفاتورة بنجاح!")
+                st.rerun()
+
+        st.markdown("---")
+        st.subheader("🛒 إدارة أصناف هذه الفاتورة:")
+        
+        current_parsed_items = parse_items_to_list(target_row['Items_Detail'])
+        
+        if current_parsed_items:
+            st.markdown("**الأصناف الحالية في الفاتورة:**")
+            for idx, item_dict in enumerate(current_parsed_items):
+                col_item_info1, col_item_info2 = st.columns([5, 1])
+                with col_item_info1:
+                    st.write(f"• {item_dict['Item']} &nbsp;|&nbsp; **الكمية:** {item_dict['Qty']}")
+                with col_item_info2:
+                    if st.button("🗑️ حذف", key=f"del_item_inv_{edit_order_id}_{idx}"):
+                        new_items = current_parsed_items.copy()
+                        new_items.pop(idx)
+                        adjusted_stock, stock_error = adjust_stock_for_order(stock_df, current_parsed_items, new_items)
+                        if stock_error:
+                            st.error(stock_error)
+                            st.stop()
+                        stock_df = adjusted_stock
+                        current_parsed_items = new_items
+                        new_items_str = " | ".join([f"{x['Item']} (الكمية: {x['Qty']})" for x in current_parsed_items]) if current_parsed_items else "لا توجد أصناف"
+                        orders_df.loc[orders_df['Order_ID'] == edit_order_id, 'Items_Detail'] = new_items_str
+                        
+                        cargo_df_save = pd.DataFrame({"Cargo_Name": cargo_companies_list})
+                        save_all_data(orders_df, stock_df, expenses_df, cargo_companies_list)
+                        st.cache_data.clear()
+                        st.success("✅ تم حذف الصنف بنجاح!")
+                        st.rerun()
+
+        st.markdown("---")
+        st.markdown("**➕ إضافة منتج جديد للفاتورة:**")
+        with st.form("add_item_to_inv_form"):
+            add_sel_item = st.selectbox("اختر المنتج", EXACT_ITEMS, key=f"add_item_sel_{edit_order_id}")
+            add_sel_qty = st.number_input("الكمية", min_value=1, value=1, key=f"add_item_qty_{edit_order_id}")
+            
+            if st.form_submit_button("➕ إضافة المنتج إلى الفاتورة"):
+                new_items = current_parsed_items.copy()
+                new_items.append({"Item": add_sel_item, "Qty": int(add_sel_qty)})
+                adjusted_stock, stock_error = adjust_stock_for_order(stock_df, current_parsed_items, new_items)
+                if stock_error:
+                    st.error(stock_error)
+                    st.stop()
+                stock_df = adjusted_stock
+                current_parsed_items = new_items
+                new_items_str = " | ".join([f"{x['Item']} (الكمية: {x['Qty']})" for x in current_parsed_items])
+                orders_df.loc[orders_df['Order_ID'] == edit_order_id, 'Items_Detail'] = new_items_str
+                
+                cargo_df_save = pd.DataFrame({"Cargo_Name": cargo_companies_list})
+                save_all_data(orders_df, stock_df, expenses_df, cargo_companies_list)
+                st.cache_data.clear()
+                st.success("✅ تمت إضافة المنتج بنجاح!")
+                st.rerun()
+
+        st.markdown("---")
+        if st.button("🗑️ حذف الفاتورة بالكامل نهائياً"):
+            old_items = parse_items_to_list(target_row["Items_Detail"])
+            adjusted_stock, stock_error = adjust_stock_for_order(stock_df, old_items, [])
+            if stock_error:
+                st.error(stock_error)
+                st.stop()
+            stock_df = adjusted_stock
+            orders_df = orders_df[orders_df['Order_ID'] != edit_order_id]
+            cargo_df_save = pd.DataFrame({"Cargo_Name": cargo_companies_list})
+            save_all_data(orders_df, stock_df, expenses_df, cargo_companies_list)
+            st.cache_data.clear()
+            st.success("🗑️ تم حذف الفاتورة بنجاح!")
+            st.rerun()
+    else:
+        st.info("لا توجد طلبيات مسجلة في النظام بعد.")
+
+elif menu == "إدارة المصروفات":
+    st.header("💸 إدارة المصروفات")
+    orders_df, stock_df, expenses_df, cargo_companies_list = load_data()
+    with st.form("add_expense_form"):
+        exp_date = st.date_input("التاريخ", datetime.date.today())
+        exp_category = st.selectbox("البند", ["إعلانات ميتا (Meta Ads)", "شراء أصناف / مواد خام (Purchases)", "سحب مبالغ مالية / مسحوبات شخصية (Withdrawals)", "مصروفات أخرى (Other Expenses)"])
+        exp_amount = st.number_input("المبلغ (OMR)", min_value=0.0, value=10.0)
+        exp_desc = st.text_input("الوصف")
+        if st.form_submit_button("💾 حفظ المصروف"):
+            new_exp_id = int(expenses_df['Expense_ID'].max() + 1) if not expenses_df.empty and not pd.isna(expenses_df['Expense_ID'].max()) else 1
+            new_row = {"Expense_ID": new_exp_id, "Date": str(exp_date), "Category": exp_category, "Amount": exp_amount, "Description": exp_desc}
+            expenses_df = pd.concat([expenses_df, pd.DataFrame([new_row])], ignore_index=True)
+            cargo_df_save = pd.DataFrame({"Cargo_Name": cargo_companies_list})
+            save_all_data(orders_df, stock_df, expenses_df, cargo_companies_list)
+            st.cache_data.clear()
+            st.success("✅ تم حفظ المصروف بنجاح!")
+            st.rerun()
+    if not expenses_df.empty:
+        st.dataframe(expenses_df, use_container_width=True)
+
+elif menu == "التقرير المالي التفصيلي":
+    st.header("📈 التقرير المالي التفصيلي والشامل")
+    orders_df, stock_df, expenses_df, _ = load_data()
+    
+    total_products_value = pd.to_numeric(orders_df['Products_Total'], errors='coerce').fillna(0).sum() if not orders_df.empty else 0.0
+    paid_mask = orders_df['Order_Payment'].astype(str).eq('تم الدفع') if not orders_df.empty else pd.Series(dtype=bool)
+    collected_products_total = pd.to_numeric(orders_df.loc[paid_mask, 'Products_Total'], errors='coerce').fillna(0).sum() if not orders_df.empty else 0.0
+    pending_products_total = pd.to_numeric(orders_df.loc[~paid_mask, 'Products_Total'], errors='coerce').fillna(0).sum() if not orders_df.empty else 0.0
+    total_shipping = pd.to_numeric(orders_df['Shipping_Price'], errors='coerce').fillna(0).sum() if not orders_df.empty else 0.0
+    shipping_paid = pd.to_numeric(orders_df.loc[orders_df['Shipping_Payment'].astype(str).eq('تم دفع الشحن'), 'Shipping_Price'], errors='coerce').fillna(0).sum() if not orders_df.empty else 0.0
+    shipping_pending = total_shipping - shipping_paid
+    total_expenses = pd.to_numeric(expenses_df['Amount'], errors='coerce').fillna(0).sum() if not expenses_df.empty else 0.0
+    total_collected_cash = collected_products_total
+    actual_treasury = total_collected_cash - total_expenses
+
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("إجمالي مبيعات المنتجات", f"{total_products_value:.3f} ر.ع")
+    m2.metric("المحصل من مبيعات المنتجات", f"{total_collected_cash:.3f} ر.ع")
+    m3.metric("المبيعات غير المحصلة", f"{pending_products_total:.3f} ر.ع")
+    m4.metric("💰 صافي التدفق النقدي (بدون الشحن)", f"{actual_treasury:.3f} ر.ع")
+    st.caption(f"رسوم الشحن خارج حسابات لبانور وتُدفع مباشرة لشركات الشحن — مدفوع لشركات الشحن: {shipping_paid:.3f} ر.ع | متبقٍ لشركات الشحن: {shipping_pending:.3f} ر.ع | إجمالي رسوم الشحن: {total_shipping:.3f} ر.ع.")
+    
+    st.markdown("---")
+    cargo_summary = get_cargo_summary_df(orders_df)
+    if not cargo_summary.empty:
+        st.dataframe(cargo_summary, use_container_width=True)
+
+elif menu == "سجل حركة المستخدم والاتصال":
+    st.header("🧾 سجل حركة المستخدم والاتصال")
+    if not IS_ADMIN:
+        st.error("هذا التقرير متاح للمدير فقط.")
+    else:
+        audit_df = read_activity_log(DB_FILE)
+        if audit_df.empty:
+            st.info("لا توجد حركات مسجلة بعد.")
+        else:
+            if "Timestamp" in audit_df.columns:
+                audit_df["Timestamp"] = pd.to_datetime(audit_df["Timestamp"], errors="coerce")
+                date_range = st.date_input("فلترة السجل بالتاريخ", value=(datetime.date.today() - datetime.timedelta(days=30), datetime.date.today()))
+                if isinstance(date_range, tuple) and len(date_range) == 2:
+                    audit_df = audit_df[(audit_df["Timestamp"].dt.date >= date_range[0]) & (audit_df["Timestamp"].dt.date <= date_range[1])]
+            if "Connection_Status" in audit_df.columns:
+                connection_filter = st.selectbox("حالة الاتصال", ["الكل", "متصل - تمت المزامنة", "غير متصل أو رفض GitHub الطلب", "جارٍ مزامنة GitHub", "تم تحميل البيانات"])
+                if connection_filter != "الكل":
+                    audit_df = audit_df[audit_df["Connection_Status"].astype(str) == connection_filter]
+            st.metric("عدد الأحداث المسجلة", len(audit_df))
+            st.dataframe(audit_df.sort_values("Timestamp", ascending=False) if "Timestamp" in audit_df.columns else audit_df, use_container_width=True, hide_index=True)
+            st.download_button("📥 تحميل سجل الحركة CSV", audit_df.to_csv(index=False).encode("utf-8-sig"), file_name="LubaNur_Activity_Log.csv", mime="text/csv")
+
+elif menu == "الربحية والأرباح":
+    st.header("💹 قسم الربحية والأرباح")
+    st.info("تكاليف شراء المنتجات تظهر في هذا القسم فقط، ولا تظهر في الفواتير أو لوحة المبيعات أو تقارير شركات الشحن.")
+    orders_df, stock_df, expenses_df, _ = load_data()
+    costs_df = load_product_costs(DB_FILE)
+    stock_names = stock_df["Item_Name"].dropna().astype(str).str.strip().drop_duplicates().tolist()
+    cost_map = dict(zip(costs_df["Item_Name"], costs_df["Unit_Cost"]))
+    cost_editor_df = pd.DataFrame({"Item_Name": stock_names, "Unit_Cost": [float(cost_map.get(n, 0.0)) for n in stock_names]})
+    st.subheader("إدخال تكلفة شراء كل منتج")
+    st.caption("أدخل تكلفة الوحدة الواحدة لكل منتج بالريال العماني. تُحفظ التكاليف في ورقة مستقلة داخل Excel باسم Product_Costs.")
+    edited_costs = st.data_editor(cost_editor_df, use_container_width=True, hide_index=True, disabled=["Item_Name"], column_config={"Item_Name": st.column_config.TextColumn("اسم المنتج"), "Unit_Cost": st.column_config.NumberColumn("تكلفة الوحدة (ر.ع)", min_value=0.0, step=0.001, format="%.3f")}, key="profitability_cost_editor")
+    if IS_ADMIN and st.button("💾 حفظ تكاليف المنتجات", key="save_product_costs"):
+        try:
+            clean_costs = edited_costs[["Item_Name", "Unit_Cost"]].copy()
+            clean_costs["Unit_Cost"] = pd.to_numeric(clean_costs["Unit_Cost"], errors="coerce").fillna(0.0).clip(lower=0)
+            save_all_data(orders_df, stock_df, expenses_df, load_data()[3], product_costs_df=clean_costs)
+            st.cache_data.clear()
+            st.success("تم حفظ تكاليف المنتجات ومزامنتها مع ملف Excel.")
+            st.rerun()
+        except Exception as cost_error:
+            st.error(f"تعذر حفظ تكاليف المنتجات: {cost_error}")
+
+    detail_df, sales_value, cogs_value, expenses_value = calculate_profitability(orders_df, costs_df, expenses_df)
+    gross_profit = sales_value - cogs_value
+    net_profit = gross_profit - expenses_value
+    missing_costs = detail_df[detail_df["حالة التكلفة"] == "لم تُدخل"] if not detail_df.empty else pd.DataFrame()
+    st.markdown("---")
+    st.subheader("ملخص الأرباح")
+    p1, p2, p3 = st.columns(3)
+    p1.metric("مبيعات المنتجات (بدون الشحن)", f"{sales_value:.3f} ر.ع")
+    p2.metric("تكلفة المنتجات المباعة", f"{cogs_value:.3f} ر.ع")
+    p3.metric("مجمل الربح قبل المصروفات", f"{gross_profit:.3f} ر.ع")
+    p4, p5 = st.columns(2)
+    p4.metric("إجمالي المصروفات المخصومة", f"{expenses_value:.3f} ر.ع")
+    p5.metric("صافي الربح بعد خصم المصروفات", f"{net_profit:.3f} ر.ع")
+    st.subheader("تفاصيل تكلفة المنتجات المباعة")
+    if not detail_df.empty:
+        st.dataframe(detail_df, use_container_width=True, hide_index=True)
+    if not missing_costs.empty:
+        st.warning("هناك منتجات مباعة لم تُدخل تكلفة وحدتها بعد.")
+        st.dataframe(missing_costs[["المنتج", "الكمية المباعة"]], use_container_width=True, hide_index=True)
+
+elif menu == "طلب توريد المخزون الحرِج":
+    st.header("🚨 طلب توريد المخزون الحرِج")
+    _, stock_df, _, _ = load_data()
+    critical_stock = stock_df[stock_df['Qty'] < 5].copy()
+    if not critical_stock.empty:
+        st.dataframe(critical_stock, use_container_width=True)
+    else:
+        st.success("🎉 ممتاز! جميع المخزونات في مستويات آمنة.")
