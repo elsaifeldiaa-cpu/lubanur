@@ -32,179 +32,59 @@ if not ADMIN_PASSWORD or not VIEWER_PASSWORD:
 
 if "user_role" not in st.session_state:
     st.session_state.user_role = None
-
 if st.session_state.user_role is None:
-    # A centered, branded login panel. The form keeps password + submit in one request.
-    st.markdown("""
-        <style>
-        .stApp {
-            background:
-                radial-gradient(circle at 50% 8%, rgba(190, 153, 75, .14), transparent 34%),
-                linear-gradient(135deg, #f7f8fb 0%, #eef1f6 100%);
-        }
-        [data-testid="stHeader"] { background: transparent; }
-        [data-testid="stMainBlockContainer"] {
-            max-width: 1120px;
-            padding-top: 5vh;
-        }
-        .login-brand {
-            text-align: center;
-            direction: rtl;
-            margin: 1.2rem 0 1.5rem;
-        }
-        .login-brand .mark {
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            width: 66px;
-            height: 66px;
-            border-radius: 20px;
-            background: linear-gradient(145deg, #14243b, #243d5b);
-            color: #e3c47d;
-            font-size: 32px;
-            box-shadow: 0 12px 28px rgba(20, 36, 59, .18);
-            margin-bottom: 12px;
-        }
-        .login-brand h1 {
-            color: #17283f;
-            font-size: clamp(25px, 3vw, 34px);
-            font-weight: 800;
-            margin: 0 0 7px;
-        }
-        .login-brand p {
-            color: #687589;
-            font-size: 15px;
-            margin: 0;
-        }
-        [data-testid="stForm"] {
-            background: rgba(255,255,255,.96);
-            border: 1px solid #e4e8ef;
-            border-radius: 20px;
-            padding: 28px 30px 24px;
-            box-shadow: 0 18px 48px rgba(25, 39, 60, .09);
-        }
-        [data-testid="stTextInput"] label {
-            color: #24364e;
-            font-weight: 700;
-            direction: rtl;
-        }
-        [data-testid="stTextInput"] input {
-            min-height: 48px;
-            border-radius: 11px;
-            border: 1px solid #d8dee8;
-            background: #f9fafc;
-            text-align: right;
-            direction: rtl;
-        }
-        [data-testid="stTextInput"] input:focus {
-            border-color: #bd984f;
-            box-shadow: 0 0 0 2px rgba(189,152,79,.15);
-        }
-        [data-testid="stFormSubmitButton"] button {
-            min-height: 48px;
-            border: 0;
-            border-radius: 11px;
-            color: #fff;
-            font-weight: 800;
-            background: linear-gradient(110deg, #172a43, #294866);
-            transition: transform .15s ease, box-shadow .15s ease;
-        }
-        [data-testid="stFormSubmitButton"] button:hover {
-            color: #fff;
-            border: 0;
-            box-shadow: 0 8px 20px rgba(23,42,67,.2);
-            transform: translateY(-1px);
-        }
-        .login-footnote {
-            text-align: center;
-            color: #8490a0;
-            font-size: 12px;
-            margin-top: 16px;
-        }
-        </style>
-    """, unsafe_allow_html=True)
-
-    st.markdown("""
-        <div class="login-brand">
-            <div class="mark">🌿</div>
-            <h1>لبانور</h1>
-            <p>نظام إدارة الطلبات والمخزون</p>
-        </div>
-    """, unsafe_allow_html=True)
-
-    left, center, right = st.columns([1, 1.15, 1])
-    with center:
-        with st.form("lubanur_login_form", clear_on_submit=False):
-            st.markdown("### تسجيل الدخول")
-            st.caption("أدخل كلمة المرور للمتابعة إلى لوحة النظام.")
-            pwd = st.text_input(
-                "كلمة المرور",
-                type="password",
-                key="login_pass",
-                placeholder="أدخل كلمة المرور هنا",
-                help="استخدم كلمة مرور المدير أو كلمة مرور العرض."
-            )
-            login_submitted = st.form_submit_button(
-                "دخول إلى النظام  ←",
-                type="primary",
-                use_container_width=True
-            )
-
-        if login_submitted:
-            if not pwd:
-                st.warning("يرجى إدخال كلمة المرور أولاً.")
-            elif pwd == ADMIN_PASSWORD:
-                st.session_state.user_role = "admin"
-                st.session_state.authenticated = True
-                st.session_state.login_event_pending = "تسجيل دخول المدير"
-                st.rerun()
-            elif pwd == VIEWER_PASSWORD:
-                st.session_state.user_role = "viewer"
-                st.session_state.authenticated = True
-                st.session_state.login_event_pending = "تسجيل دخول مستخدم العرض"
-                st.rerun()
-            else:
-                st.error("كلمة المرور غير صحيحة. تحقق منها ثم حاول مرة أخرى.")
-
-    st.markdown(
-        "<div class='login-footnote'>LUBANUR · نظام داخلي آمن لإدارة الأعمال</div>",
-        unsafe_allow_html=True
-    )
+    st.markdown("<h2 style='text-align:center'>🔐 تسجيل الدخول لنظام لبانور</h2>", unsafe_allow_html=True)
+    # Use a Streamlit form so the password and submit action are sent together.
+    # This also supports pressing Enter and avoids relying on a separate button event.
+    with st.form("lubanur_login_form", clear_on_submit=False):
+        pwd = st.text_input("كلمة المرور", type="password", key="login_pass")
+        login_submitted = st.form_submit_button("دخول", use_container_width=True)
+    if login_submitted:
+        if not pwd:
+            st.warning("يرجى إدخال كلمة المرور أولاً.")
+        elif pwd == ADMIN_PASSWORD:
+            st.session_state.user_role = "admin"
+            st.session_state.authenticated = True
+            st.session_state.login_event_pending = "تسجيل دخول المدير"
+            st.rerun()
+        elif pwd == VIEWER_PASSWORD:
+            st.session_state.user_role = "viewer"
+            st.session_state.authenticated = True
+            st.session_state.login_event_pending = "تسجيل دخول مستخدم العرض"
+            st.rerun()
+        else:
+            st.session_state.login_event_pending = "محاولة دخول فاشلة"
+            st.error("كلمة المرور غير صحيحة")
     st.stop()
 
 IS_ADMIN = st.session_state.user_role == "admin"
 
-# === هوية بصرية موحدة: كحلي وذهبي ===
+# === تخصيص CSS لمظهر عصري وواضح (Elite UI) ===
 st.markdown("""
     <style>
-    .main { direction: rtl; text-align: right; }
-    [data-testid="stAppViewContainer"] { background: #f6f7fa; }
-    [data-testid="stSidebar"] {
-        background: #f0f2f6;
-        border-left: 1px solid #e1e5ec;
+    .main {
+        direction: rtl;
+        text-align: right;
     }
-    [data-testid="stSidebar"] > div:first-child { padding-top: 1rem; }
+    .stSidebar {
+        background-color: #f8f9fa;
+        padding-top: 10px;
+    }
     .sidebar-title {
-        font-size: 17px; font-weight: 800; color: #172a43;
-        margin-bottom: 12px; text-align: center;
-        border-bottom: 2px solid #c5a35b; padding-bottom: 12px;
+        font-size: 16px;
+        font-weight: bold;
+        color: #2c3e50;
+        margin-bottom: 10px;
+        text-align: center;
+        border-bottom: 2px solid #007bff;
+        padding-bottom: 8px;
     }
-    .version-tag { font-size: 12px; color: #718096; text-align: left; padding: 5px; }
-    h1, h2, h3 { color: #1b2d45; font-weight: 800; }
-    [data-testid="stMetric"] {
-        background: #fff; border: 1px solid #e7eaf0; border-radius: 14px;
-        padding: 14px 16px; box-shadow: 0 3px 12px rgba(25,39,60,.035);
+    .version-tag {
+        font-size: 12px;
+        color: #666;
+        text-align: left;
+        padding: 5px;
     }
-    [data-testid="stMetricLabel"] { color: #64748b; font-weight: 700; }
-    div.stButton > button, div.stDownloadButton > button {
-        border-radius: 10px; font-weight: 700; min-height: 40px;
-    }
-    div.stButton > button[kind="primary"] { background: #1d3552; border-color: #1d3552; }
-    [data-testid="stDataFrame"], [data-testid="stTable"] {
-        border: 1px solid #e5e9f0; border-radius: 12px; overflow: hidden;
-    }
-    [data-testid="stExpander"] { border: 1px solid #e5e9f0; border-radius: 12px; background: #fff; }
-    hr { border-color: #e3e7ee; }
     </style>
 """, unsafe_allow_html=True)
 
@@ -351,6 +231,11 @@ def read_activity_log(path=DB_FILE):
     return pd.DataFrame(columns=AUDIT_COLUMNS)
 
 
+def collection_status_from_product_payment(order_payment):
+    """Collection of invoice products depends only on Order_Payment, never shipping fees."""
+    return "مدفوع بالكامل" if str(order_payment).strip() == "تم الدفع" else "قيد التحصيل"
+
+
 def normalize_orders_df(orders):
     if orders.empty:
         return pd.DataFrame(columns=["Order_ID", "Date", "Customer", "Phone", "Region", "Items_Detail", "Products_Total", "Shipping_Price", "Total", "Order_Payment", "Shipping_Payment", "Cargo_Company", "Delivery_Type", "Delivery_Status", "Collection_Status", "Bags", "Cargo_Barcode"])
@@ -401,10 +286,8 @@ def normalize_orders_df(orders):
                     orders[col] = orders[col].astype(int)
                     
     orders['Total'] = orders['Products_Total'] + orders['Shipping_Price']
-    # Product collection is determined ONLY by invoice/product payment, never shipping payment.
-    orders['Collection_Status'] = orders['Order_Payment'].astype(str).map(
-        lambda value: 'مدفوع بالكامل' if value.strip() == 'تم الدفع' else 'قيد التحصيل'
-    )
+    # IMPORTANT: paying shipping alone must never change the products collection status.
+    orders['Collection_Status'] = orders['Order_Payment'].map(collection_status_from_product_payment)
     return orders
 
 def parse_items_to_list(items_str):
@@ -952,8 +835,8 @@ elif menu == "تسجيل طلب جديد":
         delivery_type = st.selectbox("نوع التسليم (Delivery Type)", ["من المكتب (Pickup)", "إلى المنزل (Home Delivery)", "بدون"], key="new_dtype")
     with col_inf3:
         shipping_price = st.number_input("سعر الشحن (Shipping Price OMR)", min_value=0.0, value=1.0, key="new_ship_price")
-        order_payment = st.selectbox("حالة دفع الطلب (Order Payment Status)", ["لم يتم الدفع", "تم الدفع"], key="new_ord_pay")
-        shipping_payment = st.selectbox("حالة دفع قيمة الشحن (Shipping Payment Status)", ["لم يتم دفع الشحن", "تم دفع الشحن"], key="new_shp_pay")
+        order_payment = st.selectbox("حالة دفع المنتجات (Order Payment Status)", ["لم يتم الدفع", "تم الدفع"], key="new_ord_pay")
+        shipping_payment = st.selectbox("حالة دفع رسوم الشحن (مستقلة عن المنتجات)", ["لم يتم دفع الشحن", "تم دفع الشحن"], key="new_shp_pay")
         bags = st.number_input("عدد الأكياس (Bags)", min_value=0, value=1, key="new_bags")
 
     st.markdown("---")
@@ -1009,7 +892,7 @@ elif menu == "تسجيل طلب جديد":
                     items_detail_str = " | ".join(items_summary_list)
                     grand_total = products_total + shipping_price
                     # Product collection is independent from shipping fee payment.
-                    coll_status = "مدفوع بالكامل" if order_payment == "تم الدفع" else "قيد التحصيل"
+                    coll_status = collection_status_from_product_payment(order_payment)
                 
                     new_row = {
                         "Order_ID": next_order_id, "Date": str(order_date), "Customer": cust_name, "Phone": phone, "Region": region,
@@ -1114,25 +997,64 @@ elif menu == "تتبع الشحنات والتحصيل":
                 "رقم الفاتورة": "Order_ID", "رقم ID": "Order_ID", "التاريخ": "Date",
                 "اسم العميل": "Customer", "رقم هاتف العميل": "Phone", "المنطقة": "Region",
                 "شركة الشحن": "Cargo_Company", "رقم الباركود": "Cargo_Barcode", "عدد الأكياس": "Bags",
-                "حالة الدفع": "Order_Payment", "حالة الشحن والتوصيل": "Delivery_Status",
-                "حالة التحصيل": "Collection_Status", "قيمة المنتجات": "Products_Total",
-                "قيمة الشحن": "Shipping_Price", "الإجمالي شامل الشحن": "Total"
+                "حالة دفع المنتجات": "Order_Payment", "حالة الدفع": "Order_Payment",
+                "دفع الشحن": "Shipping_Payment",
+                "حالة تسليم العميل": "Delivery_Status", "حالة الشحن والتوصيل": "Delivery_Status",
+                "تحصيل قيمة المنتجات": "Collection_Status", "حالة التحصيل": "Collection_Status",
+                "قيمة المنتجات": "Products_Total", "قيمة الشحن": "Shipping_Price",
+                "الإجمالي شامل الشحن": "Total"
             }
-            default_visible = ["رقم الفاتورة", "رقم ID", "رقم الباركود", "حالة الدفع", "حالة الشحن والتوصيل", "قيمة المنتجات", "رقم هاتف العميل"]
+            default_visible = [
+                "رقم الفاتورة", "التاريخ", "اسم العميل", "رقم هاتف العميل",
+                "حالة تسليم العميل", "حالة دفع المنتجات", "دفع الشحن", "تحصيل قيمة المنتجات"
+            ]
             selected_labels = st.multiselect(
                 "⚙️ تخصيص أعمدة جدول الشحنات (اختر ما تريد عرضه)",
                 options=list(column_labels.keys()), default=default_visible,
                 key="tracking_visible_columns"
             )
+            # Keep delivery tracking visible at all times, even if it was unchecked in an older session.
+            if not any(label in selected_labels for label in ["حالة تسليم العميل", "حالة الشحن والتوصيل"]):
+                selected_labels.append("حالة تسليم العميل")
             if not selected_labels:
-                selected_labels = ["رقم الفاتورة"]
+                selected_labels = ["رقم الفاتورة", "حالة تسليم العميل"]
+
             display_df = pd.DataFrame(index=filtered_df.index)
             for label in selected_labels:
                 source_col = column_labels[label]
                 display_df[label] = filtered_df[source_col]
+
+            # iPad/touch-friendly column sizing: choose a column and set its width in pixels.
+            st.markdown("#### ↔️ التحكم في عرض الأعمدة (مناسب للـ iPad)")
+            st.caption("اختر العمود ثم حرّك شريط العرض وحدد تطبيق. يمكنك ضبط كل عمود بشكل مستقل.")
+            saved_widths = st.session_state.setdefault("tracking_column_widths", {})
+            with st.form("tracking_column_width_form"):
+                width_target = st.selectbox(
+                    "العمود المطلوب تغيير عرضه", list(display_df.columns),
+                    key="tracking_width_target"
+                )
+                width_value = st.slider(
+                    "عرض العمود بالبكسل", min_value=80, max_value=520, step=10,
+                    value=int(saved_widths.get(width_target, 170)),
+                    key=f"tracking_width_slider_{width_target}"
+                )
+                apply_width = st.form_submit_button("تطبيق عرض العمود")
+            if apply_width:
+                saved_widths[width_target] = int(width_value)
+                st.success(f"تم ضبط عرض عمود «{width_target}» إلى {width_value} بكسل.")
+
+            table_column_config = {
+                label: st.column_config.Column(
+                    label=label,
+                    width=int(saved_widths.get(label, 170 if label not in ["رقم الفاتورة", "رقم ID"] else 110))
+                )
+                for label in display_df.columns
+            }
             event = st.dataframe(
                 display_df,
+                column_config=table_column_config,
                 use_container_width=True,
+                height=500,
                 selection_mode="single-row",
                 on_select="rerun",
                 key="orders_grid_select"
@@ -1142,7 +1064,7 @@ elif menu == "تتبع الشحنات والتحصيل":
             
             # تحديد الطلبية المختارة إما عن طريق النقر في الجدول أو القائمة المنسدلة
             st.markdown("---")
-            st.subheader("✏️ قسم التعديل السريع لحالة الطلبية (التوصيل، الدفع، والشحن):")
+            st.subheader("✏️ التعديل السريع: حالة تسليم العميل، دفع المنتجات، ودفع الشحن:")
             
             order_options_map = {row['Order_ID']: f"طلب #{row['Order_ID']} - العميل: {row['Customer']} (هاتف: {row['Phone']})" for idx, row in filtered_df.iterrows()}
             
@@ -1179,7 +1101,7 @@ elif menu == "تتبع الشحنات والتحصيل":
                 s_i = shipping_pay_options.index(cur_s_pay) if cur_s_pay in shipping_pay_options else 0
                 new_s_pay = q_col3.selectbox("دفع الشحن", shipping_pay_options, index=s_i)
                 
-                st.caption("حالة التحصيل تُحدد تلقائياً من حالة دفع المنتجات، ولا تتأثر بحالة دفع الشحن.")
+                st.caption("تنبيه: دفع الشحن مستقل تماماً. حالة تحصيل قيمة المنتجات تعتمد فقط على (حالة دفع المنتجات)، ولا تتغير عند دفع رسوم الشحن وحدها.")
                 
                 new_barcode_val = st.text_input("تعديل باركود شركة الشحن", value=str(target_order_row.get('Cargo_Barcode', '')))
                 
@@ -1187,7 +1109,7 @@ elif menu == "تتبع الشحنات والتحصيل":
                     orders_df.loc[orig_idx, 'Delivery_Status'] = new_d_stat
                     orders_df.loc[orig_idx, 'Order_Payment'] = new_o_pay
                     orders_df.loc[orig_idx, 'Shipping_Payment'] = new_s_pay
-                    orders_df.loc[orig_idx, 'Collection_Status'] = 'مدفوع بالكامل' if new_o_pay == 'تم الدفع' else 'قيد التحصيل'
+                    orders_df.loc[orig_idx, 'Collection_Status'] = collection_status_from_product_payment(new_o_pay)
                     orders_df.loc[orig_idx, 'Cargo_Barcode'] = new_barcode_val
                     
                     cargo_df_save = pd.DataFrame({"Cargo_Name": cargo_companies_list})
