@@ -15,49 +15,12 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# === صلاحيات المستخدمين: مدير واحد + مستخدمون للعرض فقط ===
-def get_secret(name, default=""):
-    try:
-        value = st.secrets.get(name, default)
-    except Exception:
-        value = os.environ.get(name, default)
-    return str(value or default).strip()
-
-ADMIN_PASSWORD = get_secret("ADMIN_PASSWORD", get_secret("APP_PASSWORD", ""))
-VIEWER_PASSWORD = get_secret("VIEWER_PASSWORD", "")
-if not ADMIN_PASSWORD or not VIEWER_PASSWORD:
-    st.error("يرجى إعداد ADMIN_PASSWORD و VIEWER_PASSWORD في Streamlit Secrets.")
-    st.code('ADMIN_PASSWORD = "كلمة_مرور_المدير"\nVIEWER_PASSWORD = "كلمة_مرور_المشاهد"\nGITHUB_TOKEN = "توكن_خاص"\nGITHUB_REPO = "elsaifeldiaa-cpu/lubanur"\nGITHUB_BRANCH = "main"\nGITHUB_EXCEL_PATH = "system_database.xlsx"', language="toml")
-    st.stop()
-
-if "user_role" not in st.session_state:
-    st.session_state.user_role = None
-if st.session_state.user_role is None:
-    st.markdown("<h2 style='text-align:center'>🔐 تسجيل الدخول لنظام لبانور</h2>", unsafe_allow_html=True)
-    # Use a Streamlit form so the password and submit action are sent together.
-    # This also supports pressing Enter and avoids relying on a separate button event.
-    with st.form("lubanur_login_form", clear_on_submit=False):
-        pwd = st.text_input("كلمة المرور", type="password", key="login_pass")
-        login_submitted = st.form_submit_button("دخول", use_container_width=True)
-    if login_submitted:
-        if not pwd:
-            st.warning("يرجى إدخال كلمة المرور أولاً.")
-        elif pwd == ADMIN_PASSWORD:
-            st.session_state.user_role = "admin"
-            st.session_state.authenticated = True
-            st.session_state.login_event_pending = "تسجيل دخول المدير"
-            st.rerun()
-        elif pwd == VIEWER_PASSWORD:
-            st.session_state.user_role = "viewer"
-            st.session_state.authenticated = True
-            st.session_state.login_event_pending = "تسجيل دخول مستخدم العرض"
-            st.rerun()
-        else:
-            st.session_state.login_event_pending = "محاولة دخول فاشلة"
-            st.error("كلمة المرور غير صحيحة")
-    st.stop()
-
-IS_ADMIN = st.session_state.user_role == "admin"
+# === الدخول بدون كلمة مرور بناءً على طلب المستخدم ===
+# تنبيه أمني: كل من يملك رابط التطبيق سيحصل على صلاحيات المدير.
+# لا توجد حماية دخول أو فصل بين المدير والمشاهد في هذه النسخة.
+st.session_state.user_role = "admin"
+st.session_state.authenticated = True
+IS_ADMIN = True
 
 # === تخصيص CSS لمظهر عصري وواضح (Elite UI) ===
 st.markdown("""
@@ -732,11 +695,7 @@ if uploaded_backup is not None:
     except Exception as e:
         st.sidebar.error(f"خطأ: {e}")
 
-if st.sidebar.button("🔒 تسجيل الخروج (Logout)"):
-    append_activity_log(DB_FILE, "تسجيل خروج", "ضغط المستخدم زر تسجيل الخروج", "جلسة التطبيق نشطة")
-    st.session_state.authenticated = False
-    st.session_state.user_role = None
-    st.rerun()
+st.sidebar.warning("الدخول مفتوح بدون كلمة مرور — جميع زوار الرابط لديهم صلاحيات المدير.")
 
 st.title("📦 نظام إدارة الطلبيات والمخزون والمصروفات - لبانور / السيف والضياء")
 st.markdown("---")
