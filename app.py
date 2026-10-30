@@ -15,12 +15,61 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# === الدخول بدون كلمة مرور بناءً على طلب المستخدم ===
-# تنبيه أمني: كل من يملك رابط التطبيق سيحصل على صلاحيات المدير.
-# لا توجد حماية دخول أو فصل بين المدير والمشاهد في هذه النسخة.
-st.session_state.user_role = "admin"
-st.session_state.authenticated = True
-IS_ADMIN = True
+# === صلاحيات المستخدمين: مدير واحد + مستخدمون للعرض فقط ===
+def get_secret(name, default=""):
+    try:
+        value = st.secrets.get(name, default)
+    except Exception:
+        value = os.environ.get(name, default)
+    return str(value or default).strip()
+
+ADMIN_PASSWORD = get_secret("ADMIN_PASSWORD", get_secret("APP_PASSWORD", ""))
+VIEWER_PASSWORD = get_secret("VIEWER_PASSWORD", "")
+if not ADMIN_PASSWORD or not VIEWER_PASSWORD:
+    st.error("يرجى إعداد ADMIN_PASSWORD و VIEWER_PASSWORD في Streamlit Secrets.")
+    st.code('ADMIN_PASSWORD = "كلمة_مرور_المدير"\nVIEWER_PASSWORD = "كلمة_مرور_المشاهد"\nGITHUB_TOKEN = "توكن_خاص"\nGITHUB_REPO = "elsaifeldiaa-cpu/lubanur"\nGITHUB_BRANCH = "main"\nGITHUB_EXCEL_PATH = "system_database.xlsx"', language="toml")
+    st.stop()
+
+if "user_role" not in st.session_state:
+    st.session_state.user_role = None
+if st.session_state.user_role is None:
+    st.markdown("<h2 style='text-align:center'>🔐 تسجيل الدخول لنظام لبانور</h2>", unsafe_allow_html=True)
+    pwd = st.text_input("كلمة المرور", type="password", key="login_pass")
+    if st.button("دخول", use_container_width=True):
+        if pwd == ADMIN_PASSWORD:
+            st.session_state.user_role = "admin"
+            st.session_state.authenticated = True
+            st.session_state.login_event_pending = "تسجيل دخول المدير"
+            st.rerun()
+        elif pwd == VIEWER_PASSWORD:
+            st.session_state.user_role = "viewer"
+            st.session_state.authenticated = True
+            st.session_state.login_event_pending = "تسجيل دخول مستخدم العرض"
+            st.rerun()
+        else:
+            st.session_state.login_event_pending = "محاولة دخول فاشلة"
+            st.error("كلمة المرور غير صحيحة")
+    st.stop()
+
+IS_ADMIN = st.session_state.user_role == "admin"
+
+# حماية أزرار التعديل: لا يتم تفعيل هذا القيد إلا بعد اجتياز شاشة الدخول.
+# شاشة تسجيل الدخول تقع قبل هذا الموضع وتنتهي بـ st.stop()، لذلك لا يمكن تعطيل زر دخول.
+# المستخدم المشاهد يستطيع التنقل والقراءة، بينما تُعطّل له أزرار تنفيذ العمليات.
+_original_button = st.button
+def _permission_button(*args, **kwargs):
+    if st.session_state.get("user_role") == "viewer":
+        kwargs["disabled"] = True
+    return _original_button(*args, **kwargs)
+
+_original_form_submit = st.form_submit_button
+def _permission_form_submit(*args, **kwargs):
+    if st.session_state.get("user_role") == "viewer":
+        kwargs["disabled"] = True
+    return _original_form_submit(*args, **kwargs)
+
+st.button = _permission_button
+st.form_submit_button = _permission_form_submit
 
 # === تخصيص CSS لمظهر عصري وواضح (Elite UI) ===
 st.markdown("""
@@ -610,19 +659,6 @@ st.sidebar.markdown('<p class="sidebar-title">🌟 لبانور - لوحة ال�
 st.sidebar.markdown('<p class="version-tag">📌 الإصدار المحدث: v6:10pm 28-10-2026</p>', unsafe_allow_html=True)
 st.sidebar.info("👑 المدير" if IS_ADMIN else "👁️ وضع العرض فقط")
 
-# All action buttons are disabled for viewers; navigation remains available via selectbox.
-_original_button = st.button
-def _permission_button(*args, **kwargs):
-    if not IS_ADMIN:
-        kwargs["disabled"] = True
-    return _original_button(*args, **kwargs)
-st.button = _permission_button
-_original_form_submit = st.form_submit_button
-def _permission_form_submit(*args, **kwargs):
-    if not IS_ADMIN:
-        kwargs["disabled"] = True
-    return _original_form_submit(*args, **kwargs)
-st.form_submit_button = _permission_form_submit
 
 
 if st.sidebar.button("🔄 إعادة تحميل البيانات من ملف النظام"):
@@ -695,7 +731,11 @@ if uploaded_backup is not None:
     except Exception as e:
         st.sidebar.error(f"خطأ: {e}")
 
-st.sidebar.warning("الدخول مفتوح بدون كلمة مرور — جميع زوار الرابط لديهم صلاحيات المدير.")
+if st.sidebar.button("🔒 تسجيل الخروج (Logout)"):
+    append_activity_log(DB_FILE, "تسجيل خروج", "ضغط المستخدم زر تسجيل الخروج", "جلسة التطبيق نشطة")
+    st.session_state.authenticated = False
+    st.session_state.user_role = None
+    st.rerun()
 
 st.title("📦 نظام إدارة الطلبيات والمخزون والمصروفات - لبانور / السيف والضياء")
 st.markdown("---")
