@@ -13,54 +13,40 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# === 🔒 حماية الدخول: عرّف APP_PASSWORD في Streamlit Secrets أو متغيرات البيئة ===
-def get_app_password():
+# === صلاحيات المستخدمين: مدير واحد + مستخدمون للعرض فقط ===
+def get_secret(name, default=""):
     try:
-        secret_value = st.secrets.get("APP_PASSWORD", "")
+        value = st.secrets.get(name, default)
     except Exception:
-        secret_value = ""
-    return str(secret_value or os.environ.get("APP_PASSWORD", "")).strip()
+        value = os.environ.get(name, default)
+    return str(value or default).strip()
 
-PASSWORD_CORRECT = get_app_password()
-
-if not PASSWORD_CORRECT:
-    st.error("إعداد كلمة المرور غير مكتمل. عرّف APP_PASSWORD في Streamlit Secrets أو متغيرات البيئة قبل تشغيل النظام.")
-    st.code('APP_PASSWORD = "ضع_كلمة_مرور_قوية_هنا"', language="toml")
+ADMIN_PASSWORD = get_secret("ADMIN_PASSWORD", get_secret("APP_PASSWORD", ""))
+VIEWER_PASSWORD = get_secret("VIEWER_PASSWORD", "")
+if not ADMIN_PASSWORD or not VIEWER_PASSWORD:
+    st.error("يرجى إعداد ADMIN_PASSWORD و VIEWER_PASSWORD في Streamlit Secrets.")
+    st.code('ADMIN_PASSWORD = "كلمة_مرور_المدير"\nVIEWER_PASSWORD = "كلمة_مرور_المشاهد"\nGITHUB_TOKEN = "توكن_خاص"\nGITHUB_REPO = "elsaifeldiaa-cpu/lubanur"\nGITHUB_BRANCH = "main"\nGITHUB_EXCEL_PATH = "system_database.xlsx"', language="toml")
     st.stop()
 
-if "authenticated" not in st.session_state:
-    st.session_state.authenticated = False
-
-if not st.session_state.authenticated:
-    st.markdown("""
-        <style>
-        .login-container {
-            max-width: 400px;
-            margin: 100px auto;
-            padding: 30px;
-            background: #ffffff;
-            border-radius: 12px;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
-            direction: rtl;
-            text-align: right;
-            font-family: Tahoma, sans-serif;
-        }
-        </style>
-    """, unsafe_allow_html=True)
-    
-    st.markdown("<h2 style='text-align: center; color: #2c3e50;'>🔐 تسجيل الدخول لنظام لبانور</h2>", unsafe_allow_html=True)
-    st.markdown("<p style='text-align: center; color: #666;'>الرجاء إدخال كلمة المرور للوصول إلى لوحة التحكم</p>", unsafe_allow_html=True)
-    
-    entered_password = st.text_input("كلمة المرور (Password)", type="password", key="login_pass")
-    
-    if st.button("دخول (Login)", use_container_width=True):
-        if entered_password == PASSWORD_CORRECT:
+if "user_role" not in st.session_state:
+    st.session_state.user_role = None
+if st.session_state.user_role is None:
+    st.markdown("<h2 style='text-align:center'>🔐 تسجيل الدخول لنظام لبانور</h2>", unsafe_allow_html=True)
+    pwd = st.text_input("كلمة المرور", type="password", key="login_pass")
+    if st.button("دخول", use_container_width=True):
+        if pwd == ADMIN_PASSWORD:
+            st.session_state.user_role = "admin"
             st.session_state.authenticated = True
-            st.success("✅ تم تسجيل الدخول بنجاح!")
+            st.rerun()
+        elif pwd == VIEWER_PASSWORD:
+            st.session_state.user_role = "viewer"
+            st.session_state.authenticated = True
             st.rerun()
         else:
-            st.error("❌ كلمة المرور غير صحيحة! حاول مرة أخرى.")
+            st.error("كلمة المرور غير صحيحة")
     st.stop()
+
+IS_ADMIN = st.session_state.user_role == "admin"
 
 # === تخصيص CSS لمظهر عصري وواضح (Elite UI) ===
 st.markdown("""
@@ -93,6 +79,68 @@ st.markdown("""
 
 DB_FILE = "system_database.xlsx"
 ORIGINAL_EXCEL = "System.xlsx"
+
+# GitHub workbook synchronization. Configure these values in Streamlit Secrets.
+GITHUB_TOKEN = get_secret("GITHUB_TOKEN", "")
+GITHUB_REPO = get_secret("GITHUB_REPO", "elsaifeldiaa-cpu/lubanur")
+GITHUB_BRANCH = get_secret("GITHUB_BRANCH", "main")
+GITHUB_EXCEL_PATH = get_secret("GITHUB_EXCEL_PATH", "system_database.xlsx").lstrip("/")
+
+import json, base64, urllib.request, urllib.error
+
+def github_api(method, path, payload=None):
+    if not GITHUB_TOKEN:
+        raise RuntimeError("GITHUB_TOKEN غير مضبوط في Streamlit Secrets")
+    url = "https://api.github.com/repos/" + GITHUB_REPO + "/" + path.lstrip("/")
+    body = None if payload is None else json.dumps(payload).encode("utf-8")
+    req = urllib.request.Request(url, data=body, method=method, headers={
+        "Authorization": "Bearer " + GITHUB_TOKEN,
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+        "Content-Type": "application/json",
+        "User-Agent": "LubaNur-Streamlit-App"
+    })
+    try:
+        with urllib.request.urlopen(req, timeout=30) as response:
+            raw = response.read()
+            return json.loads(raw.decode("utf-8")) if raw else {}
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")
+        raise RuntimeError(f"GitHub API ({exc.code}): {detail[:500]}") from exc
+
+def github_download_workbook():
+    """Pull the repository's workbook before app initialization."""
+    if not GITHUB_TOKEN:
+        return False
+    try:
+        meta = github_api("GET", f"contents/{GITHUB_EXCEL_PATH}?ref={GITHUB_BRANCH}")
+        content = base64.b64decode(meta["content"])
+        tmp = DB_FILE + ".github.tmp"
+        with open(tmp, "wb") as f:
+            f.write(content)
+        _read_workbook_safely(tmp)
+        os.replace(tmp, DB_FILE)
+        return True
+    except Exception as exc:
+        # Do not silently replace a valid local workbook with an empty one.
+        if os.path.exists(DB_FILE) and os.path.getsize(DB_FILE) > 0:
+            st.warning(f"تعذر جلب أحدث Excel من GitHub؛ سيتم فتح النسخة المحلية: {exc}")
+            return False
+        raise RuntimeError(f"تعذر تنزيل ملف Excel من GitHub: {exc}") from exc
+
+def github_upload_workbook():
+    """Commit the current workbook to GitHub using its current SHA."""
+    if not GITHUB_TOKEN:
+        raise RuntimeError("لم تتم المزامنة: أضف GITHUB_TOKEN إلى Streamlit Secrets")
+    meta = github_api("GET", f"contents/{GITHUB_EXCEL_PATH}?ref={GITHUB_BRANCH}")
+    with open(DB_FILE, "rb") as f:
+        encoded = base64.b64encode(f.read()).decode("ascii")
+    github_api("PUT", f"contents/{GITHUB_EXCEL_PATH}", {
+        "message": "Update LubaNur database after transaction",
+        "content": encoded,
+        "sha": meta["sha"],
+        "branch": GITHUB_BRANCH
+    })
 
 EXACT_ITEMS = [
     "لبانور نسيم البحر غسول 500 مل",
@@ -231,28 +279,54 @@ def adjust_stock_for_order(stock_df, old_items, new_items):
         updated.loc[idx, "Qty"] = current_qty + delta
     return updated, None
 
-INITIALIZED_MARKER = ".system_database_initialized"
-BACKUP_DIR = "database_backups"
-REQUIRED_SHEETS = {"Orders", "Stock"}
-
-
-def _validate_workbook(path):
-    """Validate workbook readability before it is used or replaces the live database."""
-    xls = pd.ExcelFile(path)
-    missing = REQUIRED_SHEETS - set(xls.sheet_names)
+def _read_workbook_safely(path):
+    """Read and validate the required workbook sheets without modifying the source file."""
+    if not os.path.exists(path) or os.path.getsize(path) == 0:
+        raise RuntimeError(f"ملف قاعدة البيانات غير موجود أو فارغ: {path}")
+    xls = pd.ExcelFile(path, engine="openpyxl")
+    required = {"Orders", "Stock", "Expenses", "Cargo_Companies"}
+    missing = required.difference(xls.sheet_names)
     if missing:
-        raise ValueError(f"ملف قاعدة البيانات لا يحتوي على الأوراق المطلوبة: {', '.join(sorted(missing))}")
-    pd.read_excel(xls, sheet_name="Orders")
-    pd.read_excel(xls, sheet_name="Stock")
-    return xls.sheet_names
+        raise RuntimeError("ملف قاعدة البيانات لا يحتوي على الأوراق المطلوبة: " + ", ".join(sorted(missing)))
+    orders = normalize_orders_df(pd.read_excel(xls, sheet_name="Orders"))
+    stock = pd.read_excel(xls, sheet_name="Stock")
+    if not {"Item_Name", "Qty"}.issubset(stock.columns):
+        raise RuntimeError("ورقة Stock لا تحتوي على الأعمدة Item_Name و Qty. لم يتم تعديل الملف الأصلي.")
+    expenses = pd.read_excel(xls, sheet_name="Expenses")
+    cargo_df = pd.read_excel(xls, sheet_name="Cargo_Companies")
+    if "Cargo_Name" not in cargo_df.columns:
+        raise RuntimeError("ورقة Cargo_Companies لا تحتوي على العمود Cargo_Name. لم يتم تعديل الملف الأصلي.")
+    return orders, stock, expenses, cargo_df
 
 
 def save_all_data(orders_df, stock_df, expenses_df, cargo_companies_list):
-    """Save atomically, validate the new workbook, and back up the previous database first."""
-    cargo_df_save = pd.DataFrame({"Cargo_Name": cargo_companies_list})
-    movements = st.session_state.get("stock_movements_df", pd.DataFrame(columns=["DateTime", "Item_Name", "Operation", "Quantity", "Before_Qty", "After_Qty", "Note"]))
+    """Save locally, back up, then synchronize the committed workbook to GitHub."""
+    if not IS_ADMIN:
+        raise PermissionError("حساب العرض فقط؛ لا يملك صلاحية تعديل البيانات.")
     db_dir = os.path.dirname(os.path.abspath(DB_FILE))
     os.makedirs(db_dir, exist_ok=True)
+    backup_dir = os.path.join(db_dir, "database_backups")
+    cargo_df_save = pd.DataFrame({"Cargo_Name": cargo_companies_list})
+
+    # Never overwrite an unreadable source workbook. A bad read must be investigated first.
+    if os.path.exists(DB_FILE) and os.path.getsize(DB_FILE) > 0:
+        try:
+            old_orders, _, _, _ = _read_workbook_safely(DB_FILE)
+        except Exception as exc:
+            raise RuntimeError(f"تم إيقاف الحفظ لحماية البيانات؛ تعذرت قراءة قاعدة البيانات الحالية: {exc}") from exc
+        old_count = len(old_orders)
+        new_count = len(orders_df)
+        # Individual invoice deletion is supported; a sudden drop by more than one invoice is blocked.
+        if old_count - new_count > 1:
+            raise RuntimeError(
+                f"تم إيقاف الحفظ لحماية الفواتير: عدد الفواتير الحالية {old_count} والجديدة {new_count}. "
+                "الانخفاض أكبر من فاتورة واحدة. لم يتم استبدال قاعدة البيانات. راجع البيانات أو استعد نسخة احتياطية صحيحة."
+            )
+        os.makedirs(backup_dir, exist_ok=True)
+        stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+        backup_path = os.path.join(backup_dir, f"system_database_{stamp}.xlsx")
+        shutil.copy2(DB_FILE, backup_path)
+
     fd, temp_path = tempfile.mkstemp(suffix=".xlsx", dir=db_dir)
     os.close(fd)
     try:
@@ -261,93 +335,90 @@ def save_all_data(orders_df, stock_df, expenses_df, cargo_companies_list):
             stock_df.to_excel(writer, sheet_name="Stock", index=False)
             expenses_df.to_excel(writer, sheet_name="Expenses", index=False)
             cargo_df_save.to_excel(writer, sheet_name="Cargo_Companies", index=False)
-            movements.to_excel(writer, sheet_name="Stock_Movements", index=False)
-        _validate_workbook(temp_path)
-        if os.path.exists(DB_FILE) and os.path.getsize(DB_FILE) > 0:
-            _validate_workbook(DB_FILE)
-            os.makedirs(BACKUP_DIR, exist_ok=True)
-            stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-            backup_path = os.path.join(BACKUP_DIR, f"system_database_{stamp}.xlsx")
-            shutil.copy2(DB_FILE, backup_path)
+        # Verify the temporary workbook before replacing the active database.
+        _read_workbook_safely(temp_path)
         os.replace(temp_path, DB_FILE)
-        with open(INITIALIZED_MARKER, "w", encoding="utf-8") as marker:
-            marker.write(datetime.datetime.now().isoformat())
+        # Transaction is not reported as fully synchronized unless GitHub accepts it.
+        github_upload_workbook()
     finally:
         if os.path.exists(temp_path):
             os.remove(temp_path)
     st.cache_data.clear()
-    st.session_state["save_success_message"] = "✅ تم حفظ التغييرات في قاعدة البيانات بنجاح."
-    st.session_state["save_success_time"] = datetime.datetime.now().timestamp()
 
 
 def init_db():
-    if not os.path.exists(DB_FILE) or os.path.getsize(DB_FILE) == 0:
-        if os.path.exists(INITIALIZED_MARKER):
+    """Initialize only a genuinely new database; never replace an existing broken database."""
+    marker_file = ".system_database_initialized"
+    if os.path.exists(DB_FILE) and os.path.getsize(DB_FILE) > 0:
+        # Validate existing data; any error stops startup without overwriting the source.
+        _read_workbook_safely(DB_FILE)
+        with open(marker_file, "w", encoding="utf-8") as marker:
+            marker.write("initialized\n")
+        return
+
+    # If the database existed previously, its disappearance must not trigger an empty replacement.
+    if os.path.exists(marker_file):
+        raise RuntimeError(
+            "ملف system_database.xlsx مفقود أو فارغ رغم أن النظام سبق تهيئته. "
+            "تم إيقاف التشغيل لمنع إنشاء قاعدة بيانات جديدة وفقدان الفواتير. أعد الملف من نسخة احتياطية."
+        )
+
+    if os.path.exists(ORIGINAL_EXCEL) and os.path.getsize(ORIGINAL_EXCEL) > 0:
+        try:
+            xls_orig = pd.ExcelFile(ORIGINAL_EXCEL, engine="openpyxl")
+            stock = pd.read_excel(xls_orig, sheet_name="Stock +").groupby("Item Name")["Qty"].sum().reset_index()
+            stock.columns = ["Item_Name", "Qty"]
+        except Exception as exc:
             raise RuntimeError(
-                "توقّف النظام لحماية البيانات: ملف system_database.xlsx مفقود أو فارغ بعد تهيئة سابقة. "
-                "لم يتم إنشاء قاعدة جديدة. أعد ملف النسخة الاحتياطية إلى مكانه ثم أعد التشغيل."
-            )
-        if os.path.exists(ORIGINAL_EXCEL) and os.path.getsize(ORIGINAL_EXCEL) > 0:
-            try:
-                xls_orig = pd.ExcelFile(ORIGINAL_EXCEL)
-                stock = pd.read_excel(xls_orig, sheet_name="Stock +").groupby("Item Name")["Qty"].sum().reset_index()
-                stock.columns = ["Item_Name", "Qty"]
-            except Exception as exc:
-                raise RuntimeError(f"تعذر قراءة ملف المخزون الأصلي {ORIGINAL_EXCEL}: {exc}. لم يتم إنشاء قاعدة بيانات فارغة.") from exc
-        else:
-            stock = pd.DataFrame({"Item_Name": EXACT_ITEMS, "Qty": [50] * len(EXACT_ITEMS)})
-        orders = pd.DataFrame(columns=["Order_ID", "Date", "Customer", "Phone", "Region", "Items_Detail", "Products_Total", "Shipping_Price", "Total", "Order_Payment", "Shipping_Payment", "Cargo_Company", "Delivery_Type", "Delivery_Status", "Collection_Status", "Bags", "Cargo_Barcode"])
-        expenses = pd.DataFrame(columns=["Expense_ID", "Date", "Category", "Amount", "Description"])
-        cargo_df = pd.DataFrame({"Cargo_Name": DEFAULT_CARGO_COMPANIES})
-        with pd.ExcelWriter(DB_FILE, engine="openpyxl") as writer:
+                f"تعذرت قراءة ملف التأسيس {ORIGINAL_EXCEL}: {exc}. لم يتم إنشاء قاعدة بيانات فارغة."
+            ) from exc
+    else:
+        stock = pd.DataFrame({"Item_Name": EXACT_ITEMS, "Qty": [50] * len(EXACT_ITEMS)})
+
+    orders = pd.DataFrame(columns=["Order_ID", "Date", "Customer", "Phone", "Region", "Items_Detail", "Products_Total", "Shipping_Price", "Total", "Order_Payment", "Shipping_Payment", "Cargo_Company", "Delivery_Type", "Delivery_Status", "Collection_Status", "Bags", "Cargo_Barcode"])
+    expenses = pd.DataFrame(columns=["Expense_ID", "Date", "Category", "Amount", "Description"])
+    cargo_df = pd.DataFrame({"Cargo_Name": DEFAULT_CARGO_COMPANIES})
+    fd, temp_path = tempfile.mkstemp(suffix=".xlsx", dir=os.path.dirname(os.path.abspath(DB_FILE)))
+    os.close(fd)
+    try:
+        with pd.ExcelWriter(temp_path, engine="openpyxl") as writer:
             orders.to_excel(writer, sheet_name="Orders", index=False)
             stock.to_excel(writer, sheet_name="Stock", index=False)
             expenses.to_excel(writer, sheet_name="Expenses", index=False)
             cargo_df.to_excel(writer, sheet_name="Cargo_Companies", index=False)
-            pd.DataFrame(columns=["DateTime", "Item_Name", "Operation", "Quantity", "Before_Qty", "After_Qty", "Note"]).to_excel(writer, sheet_name="Stock_Movements", index=False)
-        _validate_workbook(DB_FILE)
-        with open(INITIALIZED_MARKER, "w", encoding="utf-8") as marker:
-            marker.write(datetime.datetime.now().isoformat())
-        return
+        _read_workbook_safely(temp_path)
+        os.replace(temp_path, DB_FILE)
+        with open(marker_file, "w", encoding="utf-8") as marker:
+            marker.write("initialized\n")
+    finally:
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
 
-    # If a database exists but cannot be read, stop; never replace it with empty data.
-    try:
-        _validate_workbook(DB_FILE)
-        with open(INITIALIZED_MARKER, "w", encoding="utf-8") as marker:
-            marker.write(datetime.datetime.now().isoformat())
-    except Exception as exc:
-        raise RuntimeError(
-            f"تعذر قراءة قاعدة البيانات الحالية {DB_FILE}. لم يتم تعديل الملف أو إنشاء قاعدة بديلة. "
-            f"احتفظ بالملف واسترجع نسخة احتياطية سليمة. التفاصيل: {exc}"
-        ) from exc
 
-init_db()
+try:
+    github_download_workbook()
+    init_db()
+except Exception as db_init_error:
+    st.error("تعذر فتح قاعدة البيانات بأمان. لم يتم إنشاء ملف بديل أو الكتابة فوق البيانات الموجودة.")
+    st.exception(db_init_error)
+    st.stop()
+
 
 def load_data():
     st.cache_data.clear()
     try:
-        xls = pd.ExcelFile(DB_FILE)
-        orders = pd.read_excel(xls, sheet_name="Orders")
-        orders = normalize_orders_df(orders)
-        stock = pd.read_excel(xls, sheet_name="Stock")
-        expenses = pd.read_excel(xls, sheet_name="Expenses") if "Expenses" in xls.sheet_names else pd.DataFrame(columns=["Expense_ID", "Date", "Category", "Amount", "Description"])
-        cargo_df = pd.read_excel(xls, sheet_name="Cargo_Companies") if "Cargo_Companies" in xls.sheet_names else pd.DataFrame({"Cargo_Name": DEFAULT_CARGO_COMPANIES})
-        movements = pd.read_excel(xls, sheet_name="Stock_Movements") if "Stock_Movements" in xls.sheet_names else pd.DataFrame(columns=["DateTime", "Item_Name", "Operation", "Quantity", "Before_Qty", "After_Qty", "Note"])
-        st.session_state["stock_movements_df"] = movements
+        orders, stock, expenses, cargo_df = _read_workbook_safely(DB_FILE)
     except Exception as exc:
-        # Do not attempt automatic re-initialization after a read failure: that can erase records.
-        raise RuntimeError(
-            f"تعذر قراءة {DB_FILE}. أوقف النظام لحماية البيانات؛ لم يتم إنشاء قاعدة بيانات بديلة. "
-            f"تحقق من ملف Excel واسترجع نسخة احتياطية سليمة. التفاصيل: {exc}"
-        ) from exc
-    
-    cargo_list = cargo_df['Cargo_Name'].dropna().astype(str).tolist() if not cargo_df.empty else DEFAULT_CARGO_COMPANIES
+        st.error("تعذر تحميل قاعدة البيانات. أوقف النظام الحفظ لحماية الفواتير الحالية.")
+        st.exception(exc)
+        st.stop()
+
+    cargo_list = cargo_df["Cargo_Name"].dropna().astype(str).tolist() if not cargo_df.empty else DEFAULT_CARGO_COMPANIES
     if "وصل لي" in cargo_list:
         cargo_list.remove("وصل لي")
         cargo_list.insert(0, "وصل لي")
-    elif "وصل لي" not in cargo_list:
+    else:
         cargo_list.insert(0, "وصل لي")
-        
     return orders, stock, expenses, cargo_list
 
 def render_invoice_snippet(order_row):
@@ -448,18 +519,35 @@ def render_invoice_snippet(order_row):
 
 orders_df, stock_df, expenses_df, cargo_companies_list = load_data()
 
-_success_msg = st.session_state.get("save_success_message")
-_success_time = st.session_state.get("save_success_time", 0)
-if _success_msg and datetime.datetime.now().timestamp() - _success_time < 5:
-    st.success(_success_msg)
-
 st.sidebar.markdown('<p class="sidebar-title">🌟 لبانور - لوحة التحكم الإدارية</p>', unsafe_allow_html=True)
 st.sidebar.markdown('<p class="version-tag">📌 الإصدار المحدث: v6:10pm 28-10-2026</p>', unsafe_allow_html=True)
+st.sidebar.info("👑 المدير" if IS_ADMIN else "👁️ وضع العرض فقط")
+
+# All action buttons are disabled for viewers; navigation remains available via selectbox.
+_original_button = st.button
+def _permission_button(*args, **kwargs):
+    if not IS_ADMIN:
+        kwargs["disabled"] = True
+    return _original_button(*args, **kwargs)
+st.button = _permission_button
+_original_form_submit = st.form_submit_button
+def _permission_form_submit(*args, **kwargs):
+    if not IS_ADMIN:
+        kwargs["disabled"] = True
+    return _original_form_submit(*args, **kwargs)
+st.form_submit_button = _permission_form_submit
+
 
 if st.sidebar.button("🔄 إعادة تحميل البيانات من ملف النظام"):
     st.cache_data.clear()
     st.rerun()
-st.sidebar.caption("ملاحظة: إعادة التحميل تقرأ ملف Excel الحالي فقط؛ لا توجد مزامنة سحابية متعددة المستخدمين مفعّلة في هذه النسخة.")
+st.sidebar.caption("تتم مزامنة ملف Excel مع GitHub بعد كل عملية حفظ ناجحة.")
+if IS_ADMIN and st.sidebar.button("☁️ مزامنة Excel الآن مع GitHub"):
+    try:
+        github_upload_workbook()
+        st.sidebar.success("تمت مزامنة Excel مع GitHub بنجاح")
+    except Exception as sync_error:
+        st.sidebar.error(f"فشلت المزامنة: {sync_error}")
 
 menu_options = {
     "📊 اللوحة الرئيسية": "اللوحة الرئيسية",
@@ -498,7 +586,7 @@ if os.path.exists(DB_FILE):
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
 
-uploaded_backup = st.sidebar.file_uploader("📤 استرجاع بيانات من نسخة احتياطية (.xlsx)", type=["xlsx"])
+uploaded_backup = st.sidebar.file_uploader("📤 استرجاع بيانات من نسخة احتياطية (.xlsx)", type=["xlsx"]) if IS_ADMIN else None
 if uploaded_backup is not None:
     try:
         with open(DB_FILE, "wb") as f:
@@ -510,6 +598,7 @@ if uploaded_backup is not None:
 
 if st.sidebar.button("🔒 تسجيل الخروج (Logout)"):
     st.session_state.authenticated = False
+    st.session_state.user_role = None
     st.rerun()
 
 st.title("📦 نظام إدارة الطلبيات والمخزون والمصروفات - لبانور / السيف والضياء")
@@ -616,18 +705,9 @@ elif menu == "تسجيل طلب جديد":
         st.write("")
         st.write("")
         if st.button("➕ إضافة للسلة"):
-            stock_rows = stock_df.loc[stock_df["Item_Name"].astype(str) == str(sel_item), "Qty"]
-            stock_value = pd.to_numeric(stock_rows.iloc[0], errors="coerce") if not stock_rows.empty else 0
-            available_qty = int(stock_value) if pd.notna(stock_value) else 0
-            already_in_cart = sum(int(x["Qty"]) for x in st.session_state.cart if str(x["Item"]) == str(sel_item))
-            remaining_qty = available_qty - already_in_cart
-            if int(sel_qty) > remaining_qty:
-                st.error(f"❌ لا يمكن إضافة الصنف إلى الفاتورة. الصنف: {sel_item} — المتاح بالمخزون: {available_qty}، الموجود بالفعل في السلة: {already_in_cart}، المتبقي المتاح: {remaining_qty}، والكمية المطلوبة: {int(sel_qty)}.")
-            else:
-                st.session_state.cart.append({"Item": sel_item, "Qty": int(sel_qty)})
-                st.session_state["save_success_message"] = f"✅ تمت إضافة {sel_item} إلى سلة الفاتورة."
-                st.session_state["save_success_time"] = datetime.datetime.now().timestamp()
-                st.rerun()
+            st.session_state.cart.append({"Item": sel_item, "Qty": sel_qty})
+            st.success("تمت الإضافة!")
+            st.rerun()
 
     if st.session_state.cart:
         st.markdown("🛒 **محتويات السلة الحالية:**")
@@ -954,29 +1034,18 @@ elif menu == "إدارة المخزون والجرد":
             
             if st.form_submit_button("💾 تنفيذ وتحديث المخزون"):
                 idx_st = stock_df[stock_df['Item_Name'] == r_item].index[0]
-                cur_q = int(pd.to_numeric(stock_df.loc[idx_st, 'Qty'], errors='coerce') or 0)
-                if r_action == "سحب من المخزون" and int(r_qty) > cur_q:
-                    st.error(f"❌ لا يمكن سحب {int(r_qty)}؛ الرصيد الحالي للصنف {r_item} هو {cur_q} فقط.")
+                cur_q = int(stock_df.loc[idx_st, 'Qty'])
+                if r_action == "إضافة إلى المخزون (تعزيز)":
+                    stock_df.loc[idx_st, 'Qty'] = cur_q + r_qty
                 else:
-                    new_q = cur_q + int(r_qty) if r_action == "إضافة إلى المخزون (تعزيز)" else cur_q - int(r_qty)
-                    stock_df.loc[idx_st, 'Qty'] = new_q
-                    movements = st.session_state.get("stock_movements_df", pd.DataFrame(columns=["DateTime", "Item_Name", "Operation", "Quantity", "Before_Qty", "After_Qty", "Note"]))
-                    movement = {"DateTime": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "Item_Name": r_item,
-                                "Operation": "إضافة للمخزون" if r_action == "إضافة إلى المخزون (تعزيز)" else "سحب من المخزون",
-                                "Quantity": int(r_qty), "Before_Qty": cur_q, "After_Qty": new_q, "Note": "تعزيز/سحب يدوي"}
-                    st.session_state["stock_movements_df"] = pd.concat([movements, pd.DataFrame([movement])], ignore_index=True)
-                    save_all_data(orders_df, stock_df, expenses_df, cargo_companies_list)
-                    st.session_state["save_success_message"] = f"✅ تم تنفيذ العملية بنجاح: {movement['Operation']} — {r_item} — الكمية {int(r_qty)}. الرصيد السابق {cur_q}، الرصيد الجديد {new_q}."
-                    st.session_state["save_success_time"] = datetime.datetime.now().timestamp()
-                    st.rerun()
-
-        st.markdown("### 📋 سجل حركات المخزون (لتجنب تكرار الإضافة)")
-        st.caption("يسجل هذا الجدول كل عملية إضافة أو سحب مع وقتها والرصيد قبل العملية وبعدها. راجع آخر العمليات قبل إضافة الكمية مرة أخرى.")
-        movement_history = st.session_state.get("stock_movements_df", pd.DataFrame())
-        if not movement_history.empty:
-            st.dataframe(movement_history.sort_values("DateTime", ascending=False), use_container_width=True, hide_index=True)
-        else:
-            st.info("لا توجد حركات مخزون مسجلة بعد. ستظهر هنا العمليات الجديدة بعد حفظها.")
+                    stock_df.loc[idx_st, 'Qty'] = max(0, cur_q - r_qty)
+                
+                cargo_df_save = pd.DataFrame({"Cargo_Name": cargo_companies_list})
+                save_all_data(orders_df, stock_df, expenses_df, cargo_companies_list)
+                
+                st.cache_data.clear()
+                st.success(f"✅ تم تحديث مخزون المنتج ({r_item}) بنجاح!")
+                st.rerun()
                 
     with tab2:
         st.subheader("تسوية المخزون بعد الجرد الفعلي")
