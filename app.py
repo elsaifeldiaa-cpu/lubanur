@@ -1357,33 +1357,30 @@ elif menu == "تقرير الشحن":
 
             st.markdown(f"### 📋 بيان شحنات شركة: **{selected_cargo}** (إجمالي الشحنات: {len(report_display_df)})")
             st.caption("حالة تسليم العميل موضحة لكل فاتورة. رسوم الشحن تخص شركة الشحن فقط، وتُعرض للمطابقة التشغيلية ولا تدخل في إيرادات لبانور أو تحصيل المنتجات.")
-            # Widths are adjustable per column in the expander, including on touch screens.
-            report_widths = {}
-            width_labels = {"ضيق": "small", "متوسط": "medium", "واسع": "large"}
-            with st.expander("⚙️ التحكم في عرض أعمدة تقرير الشحن (مناسب للـ iPad)"):
-                st.caption("اختر عرض كل عمود، ثم أغلق القائمة لعرض التقرير. يمكن التمرير أفقياً لبقية الأعمدة.")
-                report_col_names = list(report_display_df.columns)
-                for pair_start in range(0, len(report_col_names), 2):
-                    width_cols = st.columns(2)
-                    for slot, col_name in enumerate(report_col_names[pair_start:pair_start + 2]):
-                        with width_cols[slot]:
-                            width_choice = st.selectbox(
-                                f"عرض: {col_name}",
-                                options=list(width_labels.keys()),
-                                index=1,
-                                key=f"cargo_report_width_{pair_start}_{slot}"
-                            )
-                            report_widths[col_name] = width_labels[width_choice]
-            report_column_config = {
-                col_name: st.column_config.Column(width=report_widths.get(col_name, "medium"))
-                for col_name in report_display_df.columns
-            }
-            st.dataframe(
-                report_display_df,
-                use_container_width=True,
-                hide_index=True,
-                column_config=report_column_config
+            # Restore native interactive dataframe behavior:
+            # users choose visible columns, resize column headers directly,
+            # and swipe/scroll horizontally when the table is wider than the screen.
+            report_all_columns = list(report_display_df.columns)
+            report_visible_columns = st.multiselect(
+                "⚙️ اختيار الأعمدة الظاهرة في تقرير شركة الشحن",
+                options=report_all_columns,
+                default=report_all_columns,
+                key="cargo_report_visible_columns"
             )
+            if not report_visible_columns:
+                st.info("اختر عموداً واحداً على الأقل لعرض التقرير.")
+            else:
+                report_table_df = report_display_df[report_visible_columns].copy()
+                st.caption(
+                    "يمكن تغيير عرض كل عمود مباشرة من حدّ عنوان العمود بالسحب، "
+                    "والتنقل يميناً ويساراً داخل الجدول عند زيادة الأعمدة، بما في ذلك على iPad."
+                )
+                st.dataframe(
+                    report_table_df,
+                    use_container_width=True,
+                    hide_index=True,
+                    height=520
+                )
             products_sales = pd.to_numeric(filtered_cargo_df['Products_Total'], errors='coerce').fillna(0).sum()
             products_collected = pd.to_numeric(filtered_cargo_df.loc[filtered_cargo_df['Order_Payment'].astype(str).eq('تم الدفع'), 'Products_Total'], errors='coerce').fillna(0).sum()
             products_pending = products_sales - products_collected
