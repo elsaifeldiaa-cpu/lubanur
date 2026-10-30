@@ -5,6 +5,8 @@ import os
 import re
 import tempfile
 import shutil
+import uuid
+from openpyxl import load_workbook, Workbook
 
 st.set_page_config(
     page_title="LubaNur Order & Stock System",
@@ -32,17 +34,26 @@ if "user_role" not in st.session_state:
     st.session_state.user_role = None
 if st.session_state.user_role is None:
     st.markdown("<h2 style='text-align:center'>🔐 تسجيل الدخول لنظام لبانور</h2>", unsafe_allow_html=True)
-    pwd = st.text_input("كلمة المرور", type="password", key="login_pass")
-    if st.button("دخول", use_container_width=True):
-        if pwd == ADMIN_PASSWORD:
+    # Use a Streamlit form so the password and submit action are sent together.
+    # This also supports pressing Enter and avoids relying on a separate button event.
+    with st.form("lubanur_login_form", clear_on_submit=False):
+        pwd = st.text_input("كلمة المرور", type="password", key="login_pass")
+        login_submitted = st.form_submit_button("دخول", use_container_width=True)
+    if login_submitted:
+        if not pwd:
+            st.warning("يرجى إدخال كلمة المرور أولاً.")
+        elif pwd == ADMIN_PASSWORD:
             st.session_state.user_role = "admin"
             st.session_state.authenticated = True
+            st.session_state.login_event_pending = "تسجيل دخول المدير"
             st.rerun()
         elif pwd == VIEWER_PASSWORD:
             st.session_state.user_role = "viewer"
             st.session_state.authenticated = True
+            st.session_state.login_event_pending = "تسجيل دخول مستخدم العرض"
             st.rerun()
         else:
+            st.session_state.login_event_pending = "محاولة دخول فاشلة"
             st.error("كلمة المرور غير صحيحة")
     st.stop()
 
@@ -175,6 +186,51 @@ EXACT_ITEMS = [
 
 DEFAULT_CARGO_COMPANIES = ["وصل لي", "نول", "جيناكم", "دليلي", "بدون شحن"]
 
+AUDIT_SHEET = "Activity_Log"
+AUDIT_COLUMNS = ["Timestamp", "User_Role", "Session_ID", "Action", "Details", "Connection_Status"]
+
+if "session_id" not in st.session_state:
+    st.session_state.session_id = str(uuid.uuid4())[:12]
+
+
+def append_activity_log(path, action, details="", connection_status="غير محدد"):
+    """Append a durable audit row to the workbook without changing business sheets."""
+    try:
+        if os.path.exists(path) and os.path.getsize(path) > 0:
+            wb = load_workbook(path)
+        else:
+            wb = Workbook()
+        if AUDIT_SHEET in wb.sheetnames:
+            ws = wb[AUDIT_SHEET]
+        else:
+            ws = wb.create_sheet(AUDIT_SHEET)
+            ws.append(AUDIT_COLUMNS)
+        if ws.max_row == 0:
+            ws.append(AUDIT_COLUMNS)
+        ws.append([
+            datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            st.session_state.get("user_role", "unknown"),
+            st.session_state.get("session_id", ""),
+            str(action)[:150], str(details)[:1000], str(connection_status)[:100]
+        ])
+        wb.save(path)
+        wb.close()
+    except Exception as exc:
+        # Audit failures must be visible; do not hide them behind a successful business save.
+        st.warning(f"تعذر تسجيل حدث في سجل الحركة: {exc}")
+
+
+def read_activity_log(path=DB_FILE):
+    try:
+        if os.path.exists(path):
+            xls = pd.ExcelFile(path, engine="openpyxl")
+            if AUDIT_SHEET in xls.sheet_names:
+                return pd.read_excel(xls, sheet_name=AUDIT_SHEET)
+    except Exception as exc:
+        st.warning(f"تعذر قراءة سجل الحركة: {exc}")
+    return pd.DataFrame(columns=AUDIT_COLUMNS)
+
+
 def normalize_orders_df(orders):
     if orders.empty:
         return pd.DataFrame(columns=["Order_ID", "Date", "Customer", "Phone", "Region", "Items_Detail", "Products_Total", "Shipping_Price", "Total", "Order_Payment", "Shipping_Payment", "Cargo_Company", "Delivery_Type", "Delivery_Status", "Collection_Status", "Bags", "Cargo_Barcode"])
@@ -225,6 +281,10 @@ def normalize_orders_df(orders):
                     orders[col] = orders[col].astype(int)
                     
     orders['Total'] = orders['Products_Total'] + orders['Shipping_Price']
+    # Product collection is determined ONLY by invoice/product payment, never shipping payment.
+    orders['Collection_Status'] = orders['Order_Payment'].astype(str).map(
+        lambda value: 'مدفوع بالكامل' if value.strip() == 'تم الدفع' else 'قيد التحصيل'
+    )
     return orders
 
 def parse_items_to_list(items_str):
@@ -338,11 +398,27 @@ def save_all_data(orders_df, stock_df, expenses_df, cargo_companies_list, produc
             expenses_df.to_excel(writer, sheet_name="Expenses", index=False)
             cargo_df_save.to_excel(writer, sheet_name="Cargo_Companies", index=False)
             product_costs_df.to_excel(writer, sheet_name="Product_Costs", index=False)
+            existing_log = read_activity_log(DB_FILE)
+            if existing_log.empty:
+                existing_log = pd.DataFrame(columns=AUDIT_COLUMNS)
+            new_log = pd.DataFrame([{
+                "Timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "User_Role": st.session_state.get("user_role", "unknown"),
+                "Session_ID": st.session_state.get("session_id", ""),
+                "Action": "حفظ معاملة / تحديث قاعدة البيانات",
+                "Details": f"عدد الفواتير: {len(orders_df)} | عدد أصناف المخزون: {len(stock_df)} | المصروفات: {len(expenses_df)}",
+                "Connection_Status": "جارٍ مزامنة GitHub"
+            }])
+            pd.concat([existing_log, new_log], ignore_index=True).to_excel(writer, sheet_name=AUDIT_SHEET, index=False)
         # Verify the temporary workbook before replacing the active database.
         _read_workbook_safely(temp_path)
         os.replace(temp_path, DB_FILE)
-        # Transaction is not reported as fully synchronized unless GitHub accepts it.
-        github_upload_workbook()
+        try:
+            github_upload_workbook()
+            append_activity_log(DB_FILE, "نجاح مزامنة GitHub", "تم رفع ملف Excel بعد الحفظ", "متصل - تمت المزامنة")
+        except Exception as sync_exc:
+            append_activity_log(DB_FILE, "فشل مزامنة GitHub", str(sync_exc), "غير متصل أو رفض GitHub الطلب")
+            raise RuntimeError(f"تم حفظ البيانات محلياً، لكن فشلت مزامنتها مع GitHub: {sync_exc}") from sync_exc
     finally:
         if os.path.exists(temp_path):
             os.remove(temp_path)
@@ -399,7 +475,7 @@ def init_db():
 
 
 try:
-    github_download_workbook()
+    GITHUB_DATA_LOADED = github_download_workbook()
     init_db()
 except Exception as db_init_error:
     st.error("تعذر فتح قاعدة البيانات بأمان. لم يتم إنشاء ملف بديل أو الكتابة فوق البيانات الموجودة.")
@@ -561,6 +637,11 @@ def render_invoice_snippet(order_row):
     return receipt_html
 
 orders_df, stock_df, expenses_df, cargo_companies_list = load_data()
+if st.session_state.get("login_event_pending"):
+    append_activity_log(DB_FILE, st.session_state.pop("login_event_pending"), "تم فتح جلسة جديدة", "تم تحميل البيانات")
+if not st.session_state.get("startup_logged"):
+    append_activity_log(DB_FILE, "بدء جلسة التطبيق", "تم تشغيل التطبيق وتحميل ملف البيانات", "تم تحميل أحدث نسخة من GitHub" if GITHUB_DATA_LOADED else "استخدمت النسخة المحلية؛ لم يثبت اتصال GitHub")
+    st.session_state.startup_logged = True
 
 st.sidebar.markdown('<p class="sidebar-title">🌟 لبانور - لوحة التحكم الإدارية</p>', unsafe_allow_html=True)
 st.sidebar.markdown('<p class="version-tag">📌 الإصدار المحدث: v6:10pm 28-10-2026</p>', unsafe_allow_html=True)
@@ -588,9 +669,19 @@ st.sidebar.caption("تتم مزامنة ملف Excel مع GitHub بعد كل ع�
 if IS_ADMIN and st.sidebar.button("☁️ مزامنة Excel الآن مع GitHub"):
     try:
         github_upload_workbook()
+        append_activity_log(DB_FILE, "مزامنة يدوية ناجحة", "ضغط المستخدم زر المزامنة اليدوية", "متصل - تمت المزامنة")
         st.sidebar.success("تمت مزامنة Excel مع GitHub بنجاح")
     except Exception as sync_error:
+        append_activity_log(DB_FILE, "فشل المزامنة اليدوية", str(sync_error), "غير متصل أو رفض GitHub الطلب")
         st.sidebar.error(f"فشلت المزامنة: {sync_error}")
+if IS_ADMIN and st.sidebar.button("🔎 اختبار اتصال GitHub"):
+    try:
+        github_api("GET", f"contents/{GITHUB_EXCEL_PATH}?ref={GITHUB_BRANCH}")
+        append_activity_log(DB_FILE, "اختبار اتصال GitHub ناجح", f"تم الوصول إلى {GITHUB_REPO}/{GITHUB_EXCEL_PATH}", "متصل")
+        st.sidebar.success("الاتصال بـ GitHub يعمل")
+    except Exception as connection_error:
+        append_activity_log(DB_FILE, "فشل اختبار اتصال GitHub", str(connection_error), "غير متصل أو صلاحيات غير كافية")
+        st.sidebar.error(f"تعذر الاتصال بـ GitHub: {connection_error}")
 
 menu_options = {
     "📊 اللوحة الرئيسية": "اللوحة الرئيسية",
@@ -607,6 +698,7 @@ menu_options = {
     "💸 إدارة المصروفات": "إدارة المصروفات",
     "📈 التقرير المالي التفصيلي": "التقرير المالي التفصيلي",
     "💹 الربحية والأرباح": "الربحية والأرباح",
+    "🧾 سجل حركة المستخدم والاتصال": "سجل حركة المستخدم والاتصال",
     "🚨 طلب توريد المخزون الحرِج": "طلب توريد المخزون الحرِج"
 }
 
@@ -641,6 +733,7 @@ if uploaded_backup is not None:
         st.sidebar.error(f"خطأ: {e}")
 
 if st.sidebar.button("🔒 تسجيل الخروج (Logout)"):
+    append_activity_log(DB_FILE, "تسجيل خروج", "ضغط المستخدم زر تسجيل الخروج", "جلسة التطبيق نشطة")
     st.session_state.authenticated = False
     st.session_state.user_role = None
     st.rerun()
@@ -795,7 +888,8 @@ elif menu == "تسجيل طلب جديد":
                     items_summary_list = [f"{r['Item']} (الكمية: {r['Qty']})" for r in st.session_state.cart]
                     items_detail_str = " | ".join(items_summary_list)
                     grand_total = products_total + shipping_price
-                    coll_status = "مدفوع بالكامل" if (order_payment == "تم الدفع" and shipping_payment == "تم دفع الشحن") else "قيد التحصيل"
+                    # Product collection is independent from shipping fee payment.
+                    coll_status = "مدفوع بالكامل" if order_payment == "تم الدفع" else "قيد التحصيل"
                 
                     new_row = {
                         "Order_ID": next_order_id, "Date": str(order_date), "Customer": cust_name, "Phone": phone, "Region": region,
@@ -878,9 +972,12 @@ elif menu == "تتبع الشحنات والتحصيل":
         if status_filter != "الكل":
             filtered_df = filtered_df[filtered_df['Delivery_Status'] == status_filter]
         if collection_filter != "الكل":
-            filtered_df = filtered_df[filtered_df['Collection_Status'] == collection_filter]
+            # The collection state is based on product/invoice payment only.
+            filtered_df = filtered_df[filtered_df['Order_Payment'].map(lambda v: 'مدفوع بالكامل' if str(v).strip() == 'تم الدفع' else 'قيد التحصيل') == collection_filter]
             
-        total_due_amt = filtered_df[filtered_df['Collection_Status'] == 'قيد التحصيل']['Products_Total'].sum()
+        filtered_df = filtered_df.copy()
+        filtered_df['Collection_Status'] = filtered_df['Order_Payment'].map(lambda v: 'مدفوع بالكامل' if str(v).strip() == 'تم الدفع' else 'قيد التحصيل')
+        total_due_amt = filtered_df[filtered_df['Order_Payment'] != 'تم الدفع']['Products_Total'].sum()
         total_undelivered = len(filtered_df[filtered_df['Delivery_Status'] != 'تم تسليم العميل'])
         
         st.markdown("---")
@@ -893,11 +990,28 @@ elif menu == "تتبع الشحنات والتحصيل":
         st.subheader("📋 جدول الشحنات والطلبيات المطابقة:")
         
         if not filtered_df.empty:
-            display_cols = ['Order_ID', 'Date', 'Customer', 'Phone', 'Region', 'Cargo_Company', 'Cargo_Barcode', 'Bags', 'Delivery_Status', 'Collection_Status', 'Products_Total', 'Shipping_Price', 'Total']
-            
-            # جعل الجدول تفاعلياً وحديثاً مع تحديد الصفوف
+            column_labels = {
+                "رقم الفاتورة": "Order_ID", "رقم ID": "Order_ID", "التاريخ": "Date",
+                "اسم العميل": "Customer", "رقم هاتف العميل": "Phone", "المنطقة": "Region",
+                "شركة الشحن": "Cargo_Company", "رقم الباركود": "Cargo_Barcode", "عدد الأكياس": "Bags",
+                "حالة الدفع": "Order_Payment", "حالة الشحن والتوصيل": "Delivery_Status",
+                "حالة التحصيل": "Collection_Status", "قيمة المنتجات": "Products_Total",
+                "قيمة الشحن": "Shipping_Price", "الإجمالي شامل الشحن": "Total"
+            }
+            default_visible = ["رقم الفاتورة", "رقم ID", "رقم الباركود", "حالة الدفع", "حالة الشحن والتوصيل", "قيمة المنتجات", "رقم هاتف العميل"]
+            selected_labels = st.multiselect(
+                "⚙️ تخصيص أعمدة جدول الشحنات (اختر ما تريد عرضه)",
+                options=list(column_labels.keys()), default=default_visible,
+                key="tracking_visible_columns"
+            )
+            if not selected_labels:
+                selected_labels = ["رقم الفاتورة"]
+            display_df = pd.DataFrame(index=filtered_df.index)
+            for label in selected_labels:
+                source_col = column_labels[label]
+                display_df[label] = filtered_df[source_col]
             event = st.dataframe(
-                filtered_df[display_cols],
+                display_df,
                 use_container_width=True,
                 selection_mode="single-row",
                 on_select="rerun",
@@ -928,7 +1042,7 @@ elif menu == "تتبع الشحنات والتحصيل":
             with st.form("quick_update_order_form"):
                 st.info(f"📌 الطلب المختار: #{chosen_order_id} | العميل: {target_order_row['Customer']} | قيمة المنتجات: {target_order_row['Products_Total']} ر.ع")
                 
-                q_col1, q_col2, q_col3, q_col4 = st.columns(4)
+                q_col1, q_col2, q_col3 = st.columns(3)
                 
                 delivery_status_options = ["قيد التحضير", "جاهز للتسليم", "تم التسليم لشركة الشحن", "جاري التوصيل", "تم تسليم العميل", "لم يتم التوصيل", "مرتجع"]
                 cur_d_stat = str(target_order_row.get('Delivery_Status', 'قيد التحضير'))
@@ -945,10 +1059,7 @@ elif menu == "تتبع الشحنات والتحصيل":
                 s_i = shipping_pay_options.index(cur_s_pay) if cur_s_pay in shipping_pay_options else 0
                 new_s_pay = q_col3.selectbox("دفع الشحن", shipping_pay_options, index=s_i)
                 
-                collection_options = ["قيد التحصيل", "مدفوع بالكامل"]
-                cur_coll = str(target_order_row.get('Collection_Status', 'قيد التحصيل'))
-                c_i = collection_options.index(cur_coll) if cur_coll in collection_options else 0
-                new_coll = q_col4.selectbox("حالة التحصيل", collection_options, index=c_i)
+                st.caption("حالة التحصيل تُحدد تلقائياً من حالة دفع المنتجات، ولا تتأثر بحالة دفع الشحن.")
                 
                 new_barcode_val = st.text_input("تعديل باركود شركة الشحن", value=str(target_order_row.get('Cargo_Barcode', '')))
                 
@@ -956,7 +1067,7 @@ elif menu == "تتبع الشحنات والتحصيل":
                     orders_df.loc[orig_idx, 'Delivery_Status'] = new_d_stat
                     orders_df.loc[orig_idx, 'Order_Payment'] = new_o_pay
                     orders_df.loc[orig_idx, 'Shipping_Payment'] = new_s_pay
-                    orders_df.loc[orig_idx, 'Collection_Status'] = new_coll
+                    orders_df.loc[orig_idx, 'Collection_Status'] = 'مدفوع بالكامل' if new_o_pay == 'تم الدفع' else 'قيد التحصيل'
                     orders_df.loc[orig_idx, 'Cargo_Barcode'] = new_barcode_val
                     
                     cargo_df_save = pd.DataFrame({"Cargo_Name": cargo_companies_list})
@@ -1340,7 +1451,8 @@ elif menu == "تعديل وحذف الفواتير":
                 orders_df.loc[orders_df['Order_ID'] == edit_order_id, 'Order_Payment'] = e_ord_pay
                 orders_df.loc[orders_df['Order_ID'] == edit_order_id, 'Shipping_Payment'] = e_shp_pay
                 
-                new_coll_status = "مدفوع بالكامل" if (e_ord_pay == "تم الدفع" and e_shp_pay == "تم دفع الشحن") else "قيد التحصيل"
+                # Collection of product value depends only on Order_Payment; shipping payment is separate.
+                new_coll_status = "مدفوع بالكامل" if e_ord_pay == "تم الدفع" else "قيد التحصيل"
                 orders_df.loc[orders_df['Order_ID'] == edit_order_id, 'Collection_Status'] = new_coll_status
 
                 cargo_df_save = pd.DataFrame({"Cargo_Name": cargo_companies_list})
@@ -1467,6 +1579,29 @@ elif menu == "التقرير المالي التفصيلي":
     cargo_summary = get_cargo_summary_df(orders_df)
     if not cargo_summary.empty:
         st.dataframe(cargo_summary, use_container_width=True)
+
+elif menu == "سجل حركة المستخدم والاتصال":
+    st.header("🧾 سجل حركة المستخدم والاتصال")
+    if not IS_ADMIN:
+        st.error("هذا التقرير متاح للمدير فقط.")
+    else:
+        audit_df = read_activity_log(DB_FILE)
+        if audit_df.empty:
+            st.info("لا توجد حركات مسجلة بعد. سيبدأ النظام تسجيل العمليات المهمة والمزامنة من الآن.")
+        else:
+            if "Timestamp" in audit_df.columns:
+                audit_df["Timestamp"] = pd.to_datetime(audit_df["Timestamp"], errors="coerce")
+                date_range = st.date_input("فلترة السجل بالتاريخ", value=(datetime.date.today() - datetime.timedelta(days=30), datetime.date.today()))
+                if isinstance(date_range, tuple) and len(date_range) == 2:
+                    audit_df = audit_df[(audit_df["Timestamp"].dt.date >= date_range[0]) & (audit_df["Timestamp"].dt.date <= date_range[1])]
+            if "Connection_Status" in audit_df.columns:
+                connection_filter = st.selectbox("حالة الاتصال", ["الكل", "متصل - تمت المزامنة", "غير متصل أو رفض GitHub الطلب", "جارٍ مزامنة GitHub", "تم تحميل البيانات"])
+                if connection_filter != "الكل":
+                    audit_df = audit_df[audit_df["Connection_Status"].astype(str) == connection_filter]
+            st.metric("عدد الأحداث المسجلة", len(audit_df))
+            st.dataframe(audit_df.sort_values("Timestamp", ascending=False) if "Timestamp" in audit_df.columns else audit_df, use_container_width=True, hide_index=True)
+            st.download_button("📥 تحميل سجل الحركة CSV", audit_df.to_csv(index=False).encode("utf-8-sig"), file_name="LubaNur_Activity_Log.csv", mime="text/csv")
+        st.caption("يسجل النظام عمليات الدخول والخروج، وحفظ المعاملات، ومحاولات مزامنة GitHub ونتائجها. انقطاع اتصال المتصفح نفسه لا يمكن رصده لحظياً من الخادم؛ يسجل النظام فشل الاتصال عند محاولة المزامنة أو الحفظ.")
 
 elif menu == "الربحية والأرباح":
     st.header("💹 قسم الربحية والأرباح")
