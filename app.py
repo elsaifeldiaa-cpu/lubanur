@@ -299,7 +299,7 @@ def _read_workbook_safely(path):
     return orders, stock, expenses, cargo_df
 
 
-def save_all_data(orders_df, stock_df, expenses_df, cargo_companies_list):
+def save_all_data(orders_df, stock_df, expenses_df, cargo_companies_list, product_costs_df=None):
     """Save locally, back up, then synchronize the committed workbook to GitHub."""
     if not IS_ADMIN:
         raise PermissionError("حساب العرض فقط؛ لا يملك صلاحية تعديل البيانات.")
@@ -307,6 +307,8 @@ def save_all_data(orders_df, stock_df, expenses_df, cargo_companies_list):
     os.makedirs(db_dir, exist_ok=True)
     backup_dir = os.path.join(db_dir, "database_backups")
     cargo_df_save = pd.DataFrame({"Cargo_Name": cargo_companies_list})
+    if product_costs_df is None:
+        product_costs_df = load_product_costs(DB_FILE)
 
     # Never overwrite an unreadable source workbook. A bad read must be investigated first.
     if os.path.exists(DB_FILE) and os.path.getsize(DB_FILE) > 0:
@@ -335,6 +337,7 @@ def save_all_data(orders_df, stock_df, expenses_df, cargo_companies_list):
             stock_df.to_excel(writer, sheet_name="Stock", index=False)
             expenses_df.to_excel(writer, sheet_name="Expenses", index=False)
             cargo_df_save.to_excel(writer, sheet_name="Cargo_Companies", index=False)
+            product_costs_df.to_excel(writer, sheet_name="Product_Costs", index=False)
         # Verify the temporary workbook before replacing the active database.
         _read_workbook_safely(temp_path)
         os.replace(temp_path, DB_FILE)
@@ -402,6 +405,46 @@ except Exception as db_init_error:
     st.error("تعذر فتح قاعدة البيانات بأمان. لم يتم إنشاء ملف بديل أو الكتابة فوق البيانات الموجودة.")
     st.exception(db_init_error)
     st.stop()
+
+
+def load_product_costs(path=DB_FILE):
+    """Read private product unit costs from their dedicated workbook sheet."""
+    try:
+        xls = pd.ExcelFile(path, engine="openpyxl")
+        if "Product_Costs" in xls.sheet_names:
+            costs = pd.read_excel(xls, sheet_name="Product_Costs")
+        else:
+            costs = pd.DataFrame(columns=["Item_Name", "Unit_Cost"])
+    except Exception:
+        costs = pd.DataFrame(columns=["Item_Name", "Unit_Cost"])
+    for col in ["Item_Name", "Unit_Cost"]:
+        if col not in costs.columns:
+            costs[col] = "" if col == "Item_Name" else 0.0
+    costs = costs[["Item_Name", "Unit_Cost"]].copy()
+    costs["Item_Name"] = costs["Item_Name"].astype(str).str.strip()
+    costs["Unit_Cost"] = pd.to_numeric(costs["Unit_Cost"], errors="coerce").fillna(0.0)
+    return costs[costs["Item_Name"] != ""].drop_duplicates("Item_Name", keep="last").reset_index(drop=True)
+
+
+def calculate_profitability(orders_df, costs_df, expenses_df):
+    cost_map = dict(zip(costs_df["Item_Name"].astype(str), pd.to_numeric(costs_df["Unit_Cost"], errors="coerce").fillna(0.0)))
+    qty_by_item = {}
+    for _, order in orders_df.iterrows():
+        for item in parse_items_to_list(order.get("Items_Detail", "")):
+            name = str(item.get("Item", "")).strip()
+            qty = int(item.get("Qty", 0) or 0)
+            if name and qty > 0:
+                qty_by_item[name] = qty_by_item.get(name, 0) + qty
+    rows = []
+    total_cogs = 0.0
+    for name, qty in sorted(qty_by_item.items()):
+        unit_cost = float(cost_map.get(name, 0.0))
+        subtotal = unit_cost * qty
+        total_cogs += subtotal
+        rows.append({"المنتج": name, "الكمية المباعة": qty, "تكلفة الوحدة (ر.ع)": unit_cost, "إجمالي التكلفة (ر.ع)": subtotal, "حالة التكلفة": "مدخلة" if name in cost_map and unit_cost > 0 else "لم تُدخل"})
+    sales = pd.to_numeric(orders_df.get("Products_Total", pd.Series(dtype=float)), errors="coerce").fillna(0).sum()
+    expenses = pd.to_numeric(expenses_df.get("Amount", pd.Series(dtype=float)), errors="coerce").fillna(0).sum()
+    return pd.DataFrame(rows), float(sales), float(total_cogs), float(expenses)
 
 
 def load_data():
@@ -563,6 +606,7 @@ menu_options = {
     "🖨️ فاتورة العميل": "فاتورة العميل",
     "💸 إدارة المصروفات": "إدارة المصروفات",
     "📈 التقرير المالي التفصيلي": "التقرير المالي التفصيلي",
+    "💹 الربحية والأرباح": "الربحية والأرباح",
     "🚨 طلب توريد المخزون الحرِج": "طلب توريد المخزون الحرِج"
 }
 
@@ -605,58 +649,67 @@ st.title("📦 نظام إدارة الطلبيات والمخزون والمص�
 st.markdown("---")
 
 def get_cargo_summary_df(orders_df):
+    """ملخص شركة الشحن على أساس قيمة المنتجات فقط؛ رسوم الشحن لا تدخل حسابات الشركة."""
     if orders_df.empty or 'Cargo_Company' not in orders_df.columns:
         return pd.DataFrame()
-    
-    cargo_groups = orders_df.groupby('Cargo_Company')
+
+    df = orders_df.copy()
+    for col in ['Products_Total', 'Shipping_Price']:
+        if col not in df.columns:
+            df[col] = 0.0
+        df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0.0)
+    if 'Order_Payment' not in df.columns:
+        df['Order_Payment'] = 'لم يتم الدفع'
+    if 'Shipping_Payment' not in df.columns:
+        df['Shipping_Payment'] = 'لم يتم دفع الشحن'
+
     summary_list = []
-    
-    for company, group in cargo_groups:
-        total_orders = len(group)
-        products_total = group['Products_Total'].sum()
-        shipping_total = group['Shipping_Price'].sum()
-        grand_total = group['Total'].sum()
-        
-        collected_amount = group[group['Order_Payment'] == 'تم الدفع']['Products_Total'].sum()
-        pending_amount = group[group['Order_Payment'] != 'تم الدفع']['Products_Total'].sum()
-        
+    for company, group in df.groupby('Cargo_Company', dropna=False):
+        is_collected = group['Order_Payment'].astype(str).eq('تم الدفع')
+        products_sales = float(group['Products_Total'].sum())
+        collected_products = float(group.loc[is_collected, 'Products_Total'].sum())
+        uncollected_products = float(group.loc[~is_collected, 'Products_Total'].sum())
+        # رسوم الشحن معلومات تشغيلية تخص شركة الشحن، وليست إيراداً أو تحصيلاً للشركة.
+        shipping_collected = float(group.loc[group['Shipping_Payment'].astype(str).eq('تم دفع الشحن'), 'Shipping_Price'].sum())
+        shipping_pending = float(group.loc[~group['Shipping_Payment'].astype(str).eq('تم دفع الشحن'), 'Shipping_Price'].sum())
         summary_list.append({
-            'شركة الشحن': company,
-            'عدد الطلبات': total_orders,
-            'مستحقات المنتجات بدون شحن (ر.ع)': products_total,
-            'ما تم تحصيله (ر.ع)': collected_amount,
-            'المستحق المتبقي لدى الشركة (ر.ع)': pending_amount,
-            'قيمة الشحن (ر.ع)': shipping_total,
-            'الإجمالي الكلي (ر.ع)': grand_total
+            'شركة الشحن': str(company) if pd.notna(company) else 'غير محدد',
+            'عدد الطلبات': len(group),
+            'مبيعات المنتجات (ر.ع)': products_sales,
+            'المحصل من مبيعات المنتجات (ر.ع)': collected_products,
+            'المبيعات غير المحصلة (ر.ع)': uncollected_products,
+            'رسوم الشحن المحصلة للشركة (معلومة فقط)': shipping_collected,
+            'رسوم الشحن غير المحصلة للشركة (معلومة فقط)': shipping_pending,
         })
-        
     return pd.DataFrame(summary_list)
 
 if menu == "اللوحة الرئيسية":
     st.header("📊 الملخص التشغيلي والمالي الشامل")
     orders_df, stock_df, expenses_df, _ = load_data()
     
-    total_products_sales = orders_df['Products_Total'].sum() if not orders_df.empty else 0.0
-    total_shipping = orders_df['Shipping_Price'].sum() if not orders_df.empty else 0.0
-    total_expenses = expenses_df['Amount'].sum() if not expenses_df.empty else 0.0
-    
-    collected_products_total = orders_df[orders_df['Order_Payment'] == 'تم الدفع']['Products_Total'].sum() if not orders_df.empty else 0.0
-    collected_shipping_total = orders_df[orders_df['Shipping_Payment'] == 'تم دفع الشحن']['Shipping_Price'].sum() if not orders_df.empty else 0.0
-    pending_products_total = orders_df[orders_df['Order_Payment'] != 'تم الدفع']['Products_Total'].sum() if not orders_df.empty else 0.0
-    pending_shipping_total = orders_df[orders_df['Shipping_Payment'] != 'تم دفع الشحن']['Shipping_Price'].sum() if not orders_df.empty else 0.0
-    total_collected_cash = collected_products_total + collected_shipping_total
+    total_products_sales = pd.to_numeric(orders_df['Products_Total'], errors='coerce').fillna(0).sum() if not orders_df.empty else 0.0
+    total_shipping = pd.to_numeric(orders_df['Shipping_Price'], errors='coerce').fillna(0).sum() if not orders_df.empty else 0.0
+    total_expenses = pd.to_numeric(expenses_df['Amount'], errors='coerce').fillna(0).sum() if not expenses_df.empty else 0.0
+
+    paid_mask = orders_df['Order_Payment'].astype(str).eq('تم الدفع') if not orders_df.empty else pd.Series(dtype=bool)
+    collected_products_total = pd.to_numeric(orders_df.loc[paid_mask, 'Products_Total'], errors='coerce').fillna(0).sum() if not orders_df.empty else 0.0
+    pending_products_total = pd.to_numeric(orders_df.loc[~paid_mask, 'Products_Total'], errors='coerce').fillna(0).sum() if not orders_df.empty else 0.0
+    # رسوم الشحن تُدفع مباشرة لشركة الشحن؛ لا تُضاف إلى إيرادات أو تحصيلات أو خزينة لبانور.
+    total_collected_cash = collected_products_total
     actual_treasury = total_collected_cash - total_expenses
+    shipping_paid = pd.to_numeric(orders_df.loc[orders_df['Shipping_Payment'].astype(str).eq('تم دفع الشحن'), 'Shipping_Price'], errors='coerce').fillna(0).sum() if not orders_df.empty else 0.0
+    shipping_unpaid = total_shipping - shipping_paid
 
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("إجمالي مبيعات المنتجات (بدون شحن)", f"{total_products_sales:.3f} ر.ع")
-    c2.metric("إجمالي المبالغ المحصلة (منتجات + شحن)", f"{total_collected_cash:.3f} ر.ع")
+    c1.metric("إجمالي مبيعات المنتجات (بدون الشحن)", f"{total_products_sales:.3f} ر.ع")
+    c2.metric("المحصل من مبيعات المنتجات فقط", f"{total_collected_cash:.3f} ر.ع")
     c3.metric("إجمالي المصروفات المسجلة", f"{total_expenses:.3f} ر.ع")
-    c4.metric("💰 صافي التدفق النقدي المسجل", f"{actual_treasury:.3f} ر.ع")
+    c4.metric("💰 صافي التدفق النقدي (بدون الشحن)", f"{actual_treasury:.3f} ر.ع")
 
     st.markdown("---")
     sc1, sc2 = st.columns(2)
-    sc1.metric("⏳ المبالغ قيد التحصيل لدى شركات الشحن (منتجات)", f"{pending_products_total:.3f} ر.ع")
-    sc2.metric("🚚 الشحن: المحصل {0:.3f} ر.ع | غير المحصل {1:.3f} ر.ع".format(collected_shipping_total, pending_shipping_total), f"{total_shipping:.3f} ر.ع إجمالي")
+    sc1.metric("⏳ المبيعات غير المحصلة لدى شركات الشحن", f"{pending_products_total:.3f} ر.ع")
+    sc2.metric("🚚 رسوم الشحن الخاصة بشركات الشحن (خارج الحسابات)", f"مدفوع: {shipping_paid:.3f} | متبقٍ: {shipping_unpaid:.3f} ر.ع", f"الإجمالي: {total_shipping:.3f} ر.ع — لا يدخل في حسابات لبانور")
 
     st.markdown("---")
     st.subheader("📋 ملخص مبيعات ومستحقات المنتجات لدى شركات الشحن")
@@ -1124,14 +1177,26 @@ elif menu == "تقرير الشحن":
                 "رقم الهاتف": filtered_cargo_df['Phone'],
                 "مكان التوصيل (المنطقة)": filtered_cargo_df['Region'],
                 "عدد الأكياس": filtered_cargo_df['Bags'],
-                "الطلب مدفوع؟": filtered_cargo_df['Order_Payment'],
-                "الشحن مدفوع؟": filtered_cargo_df['Shipping_Payment'],
+                "قيمة مبيعات المنتجات (ر.ع)": filtered_cargo_df['Products_Total'],
+                "حالة تحصيل المنتجات": filtered_cargo_df['Order_Payment'],
+                "المحصل من المنتجات (ر.ع)": filtered_cargo_df.apply(lambda r: r['Products_Total'] if str(r['Order_Payment']) == 'تم الدفع' else 0, axis=1),
+                "المتبقي من المنتجات (ر.ع)": filtered_cargo_df.apply(lambda r: 0 if str(r['Order_Payment']) == 'تم الدفع' else r['Products_Total'], axis=1),
+                "رسوم الشحن (للشركة مباشرة)": filtered_cargo_df['Shipping_Price'],
+                "حالة دفع الشحن": filtered_cargo_df['Shipping_Payment'],
                 "باركود الشحن": filtered_cargo_df['Cargo_Barcode'],
-                "إجمالي المبلغ (ر.ع)": filtered_cargo_df['Total']
             })
 
             st.markdown(f"### 📋 بيان شحنات شركة: **{selected_cargo}** (إجمالي الشحنات: {len(report_display_df)})")
             st.dataframe(report_display_df, use_container_width=True)
+            products_sales = pd.to_numeric(filtered_cargo_df['Products_Total'], errors='coerce').fillna(0).sum()
+            products_collected = pd.to_numeric(filtered_cargo_df.loc[filtered_cargo_df['Order_Payment'].astype(str).eq('تم الدفع'), 'Products_Total'], errors='coerce').fillna(0).sum()
+            products_pending = products_sales - products_collected
+            st.markdown("#### ملخص حساب المنتجات لدى شركة الشحن")
+            k1, k2, k3 = st.columns(3)
+            k1.metric("مبيعات المنتجات", f"{products_sales:.3f} ر.ع")
+            k2.metric("المحصل", f"{products_collected:.3f} ر.ع")
+            k3.metric("المبيعات غير المحصلة / المتبقي", f"{products_pending:.3f} ر.ع")
+            st.caption("رسوم الشحن معروضة للمراجعة التشغيلية فقط؛ فهي تخص شركة الشحن ولا تدخل في حسابات لبانور.")
         else:
             st.warning("لا توجد شحنات مطابقة لخيارات البحث المحددة.")
     else:
@@ -1379,27 +1444,72 @@ elif menu == "التقرير المالي التفصيلي":
     st.header("📈 التقرير المالي التفصيلي والشامل")
     orders_df, stock_df, expenses_df, _ = load_data()
     
-    total_products_value = orders_df['Products_Total'].sum() if not orders_df.empty else 0.0
-    collected_products_total = orders_df[orders_df['Order_Payment'] == 'تم الدفع']['Products_Total'].sum() if not orders_df.empty else 0.0
-    collected_shipping_total = orders_df[orders_df['Shipping_Payment'] == 'تم دفع الشحن']['Shipping_Price'].sum() if not orders_df.empty else 0.0
-    pending_products_total = orders_df[orders_df['Order_Payment'] != 'تم الدفع']['Products_Total'].sum() if not orders_df.empty else 0.0
-    pending_shipping_total = orders_df[orders_df['Shipping_Payment'] != 'تم دفع الشحن']['Shipping_Price'].sum() if not orders_df.empty else 0.0
-    total_shipping = orders_df['Shipping_Price'].sum() if not orders_df.empty else 0.0
+    total_products_value = pd.to_numeric(orders_df['Products_Total'], errors='coerce').fillna(0).sum() if not orders_df.empty else 0.0
+    paid_mask = orders_df['Order_Payment'].astype(str).eq('تم الدفع') if not orders_df.empty else pd.Series(dtype=bool)
+    collected_products_total = pd.to_numeric(orders_df.loc[paid_mask, 'Products_Total'], errors='coerce').fillna(0).sum() if not orders_df.empty else 0.0
+    pending_products_total = pd.to_numeric(orders_df.loc[~paid_mask, 'Products_Total'], errors='coerce').fillna(0).sum() if not orders_df.empty else 0.0
+    total_shipping = pd.to_numeric(orders_df['Shipping_Price'], errors='coerce').fillna(0).sum() if not orders_df.empty else 0.0
+    shipping_paid = pd.to_numeric(orders_df.loc[orders_df['Shipping_Payment'].astype(str).eq('تم دفع الشحن'), 'Shipping_Price'], errors='coerce').fillna(0).sum() if not orders_df.empty else 0.0
+    shipping_pending = total_shipping - shipping_paid
     total_expenses = pd.to_numeric(expenses_df['Amount'], errors='coerce').fillna(0).sum() if not expenses_df.empty else 0.0
-    total_collected_cash = collected_products_total + collected_shipping_total
+    # التحصيل المالي للشركة يخص المنتجات فقط؛ رسوم الشحن مستبعدة لأنها تذهب مباشرة للناقل.
+    total_collected_cash = collected_products_total
     actual_treasury = total_collected_cash - total_expenses
-    
+
     m1, m2, m3, m4 = st.columns(4)
     m1.metric("إجمالي مبيعات المنتجات", f"{total_products_value:.3f} ر.ع")
-    m2.metric("إجمالي المحصل (منتجات + شحن)", f"{total_collected_cash:.3f} ر.ع")
-    m3.metric("إجمالي المصروفات المسجلة", f"{total_expenses:.3f} ر.ع")
-    m4.metric("💰 صافي التدفق النقدي المسجل", f"{actual_treasury:.3f} ر.ع")
-    st.caption(f"مستحقات المنتجات غير المحصلة: {pending_products_total:.3f} ر.ع | الشحن غير المحصل: {pending_shipping_total:.3f} ر.ع | إجمالي الشحن: {total_shipping:.3f} ر.ع. هذا تقدير مبني على حالات الدفع المسجلة والمصروفات المسجلة، وليس رصيدًا بنكيًا مباشرًا.")
+    m2.metric("المحصل من مبيعات المنتجات", f"{total_collected_cash:.3f} ر.ع")
+    m3.metric("المبيعات غير المحصلة", f"{pending_products_total:.3f} ر.ع")
+    m4.metric("💰 صافي التدفق النقدي (بدون الشحن)", f"{actual_treasury:.3f} ر.ع")
+    st.caption(f"رسوم الشحن خارج حسابات لبانور وتُدفع مباشرة لشركات الشحن — مدفوع لشركات الشحن: {shipping_paid:.3f} ر.ع | متبقٍ لشركات الشحن: {shipping_pending:.3f} ر.ع | إجمالي رسوم الشحن: {total_shipping:.3f} ر.ع. لا تدخل هذه المبالغ في المبيعات أو التحصيل أو صافي التدفق النقدي.")
     
     st.markdown("---")
     cargo_summary = get_cargo_summary_df(orders_df)
     if not cargo_summary.empty:
         st.dataframe(cargo_summary, use_container_width=True)
+
+elif menu == "الربحية والأرباح":
+    st.header("💹 قسم الربحية والأرباح")
+    st.info("تكاليف شراء المنتجات تظهر في هذا القسم فقط، ولا تظهر في الفواتير أو لوحة المبيعات أو تقارير شركات الشحن.")
+    orders_df, stock_df, expenses_df, _ = load_data()
+    costs_df = load_product_costs(DB_FILE)
+    stock_names = stock_df["Item_Name"].dropna().astype(str).str.strip().drop_duplicates().tolist()
+    cost_map = dict(zip(costs_df["Item_Name"], costs_df["Unit_Cost"]))
+    cost_editor_df = pd.DataFrame({"Item_Name": stock_names, "Unit_Cost": [float(cost_map.get(n, 0.0)) for n in stock_names]})
+    st.subheader("إدخال تكلفة شراء كل منتج")
+    st.caption("أدخل تكلفة الوحدة الواحدة لكل منتج بالريال العماني. تُحفظ التكاليف في ورقة مستقلة داخل Excel باسم Product_Costs.")
+    edited_costs = st.data_editor(cost_editor_df, use_container_width=True, hide_index=True, disabled=["Item_Name"], column_config={"Item_Name": st.column_config.TextColumn("اسم المنتج"), "Unit_Cost": st.column_config.NumberColumn("تكلفة الوحدة (ر.ع)", min_value=0.0, step=0.001, format="%.3f")}, key="profitability_cost_editor")
+    if IS_ADMIN and st.button("💾 حفظ تكاليف المنتجات", key="save_product_costs"):
+        try:
+            clean_costs = edited_costs[["Item_Name", "Unit_Cost"]].copy()
+            clean_costs["Unit_Cost"] = pd.to_numeric(clean_costs["Unit_Cost"], errors="coerce").fillna(0.0).clip(lower=0)
+            save_all_data(orders_df, stock_df, expenses_df, load_data()[3], product_costs_df=clean_costs)
+            st.cache_data.clear()
+            st.success("تم حفظ تكاليف المنتجات ومزامنتها مع ملف Excel.")
+            st.rerun()
+        except Exception as cost_error:
+            st.error(f"تعذر حفظ تكاليف المنتجات: {cost_error}")
+
+    detail_df, sales_value, cogs_value, expenses_value = calculate_profitability(orders_df, costs_df, expenses_df)
+    gross_profit = sales_value - cogs_value
+    net_profit = gross_profit - expenses_value
+    missing_costs = detail_df[detail_df["حالة التكلفة"] == "لم تُدخل"] if not detail_df.empty else pd.DataFrame()
+    st.markdown("---")
+    st.subheader("ملخص الأرباح")
+    p1, p2, p3 = st.columns(3)
+    p1.metric("مبيعات المنتجات (بدون الشحن)", f"{sales_value:.3f} ر.ع")
+    p2.metric("تكلفة المنتجات المباعة", f"{cogs_value:.3f} ر.ع")
+    p3.metric("مجمل الربح قبل المصروفات", f"{gross_profit:.3f} ر.ع")
+    p4, p5 = st.columns(2)
+    p4.metric("إجمالي المصروفات المخصومة", f"{expenses_value:.3f} ر.ع")
+    p5.metric("صافي الربح بعد خصم المصروفات", f"{net_profit:.3f} ر.ع")
+    st.subheader("تفاصيل تكلفة المنتجات المباعة")
+    if not detail_df.empty:
+        st.dataframe(detail_df, use_container_width=True, hide_index=True)
+    if not missing_costs.empty:
+        st.warning("هناك منتجات مباعة لم تُدخل تكلفة وحدتها بعد. لذلك صافي الربح الحالي غير نهائي، والتكلفة المحتسبة لهذه المنتجات تساوي صفراً حتى إدخالها.")
+        st.dataframe(missing_costs[["المنتج", "الكمية المباعة"]], use_container_width=True, hide_index=True)
+    st.caption("طريقة الحساب: مجمل الربح = مبيعات المنتجات − تكلفة الوحدات المباعة. صافي الربح = مجمل الربح − جميع المصروفات المسجلة. رسوم الشحن مستبعدة لأنها تخص شركة الشحن. التكاليف التي تدخلها الآن تُطبق على الكميات المباعة في الطلبات التاريخية أيضاً؛ إذا تغيرت تكلفة الشراء بمرور الوقت فستحتاج لاحقاً إلى سجل تكلفة بتاريخ سريان.")
 
 elif menu == "طلب توريد المخزون الحرِج":
     st.header("🚨 طلب توريد المخزون الحرِج")
