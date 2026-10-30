@@ -387,7 +387,7 @@ def normalize_orders_df(orders):
         "Shipping_Payment": "لم يتم دفع الشحن", "Cargo_Company": "وصل لي", 
         "Delivery_Type": "من المكتب (Pickup)", "Delivery_Status": "قيد التحضير", 
         "Collection_Status": "قيد التحصيل", "Payment_Channel": "",
-        "Carrier_Collection_Status": "لم يُسلّم لشركة الشحن", "Bags": 1, "Cargo_Barcode": ""
+        "Carrier_Collection_Status": "قيد التحصيل من شركة الشحن", "Bags": 1, "Cargo_Barcode": ""
     }
     
     for col, default_val in expected_defaults.items():
@@ -407,21 +407,24 @@ def normalize_orders_df(orders):
     orders['Collection_Status'] = orders['Order_Payment'].astype(str).map(
         lambda value: 'مدفوع بالكامل' if value.strip() == 'تم الدفع' else 'قيد التحصيل'
     )
-    # Legacy rows are classified conservatively; prepaid invoices are never assigned to the carrier.
-    def _legacy_carrier_state(row):
+    # Normalize all historical values to the three user-facing collection choices.
+    # A prepaid invoice must never be treated as money owed by the courier.
+    PREPAID = 'تم الدفع مسبقاً'
+    CARRIER_PENDING = 'قيد التحصيل من شركة الشحن'
+    CARRIER_COLLECTED = 'تم التحصيل من شركة الشحن'
+    def _normalized_carrier_state(row):
         current = str(row.get('Carrier_Collection_Status', '')).strip()
-        valid_done = {'تم التحصيل من العميل - بانتظار التوريد', 'تم التوريد إلى لبانور'}
-        if current in valid_done:
-            return current
-        if str(row.get('Order_Payment', '')).strip() == 'تم الدفع':
-            channel = str(row.get('Payment_Channel', '')).strip()
-            if channel == 'تحصيل عند الاستلام عبر شركة الشحن':
-                return 'تم التحصيل من العميل - بانتظار التوريد'
-            return 'غير مطلوب - دفع مباشر مسبقاً'
-        if str(row.get('Delivery_Status', '')).strip() in {'تم التسليم لشركة الشحن', 'جاري التوصيل', 'تم تسليم العميل'}:
-            return 'قيد التحصيل لدى شركة الشحن'
-        return 'لم يُسلّم لشركة الشحن'
-    orders['Carrier_Collection_Status'] = orders.apply(_legacy_carrier_state, axis=1)
+        paid = str(row.get('Order_Payment', '')).strip() == 'تم الدفع'
+        channel = str(row.get('Payment_Channel', '')).strip()
+        # Preserve an explicitly recorded carrier collection from older versions.
+        if current in {CARRIER_COLLECTED, 'تم التحصيل من العميل - بانتظار التوريد', 'تم التوريد إلى لبانور'}:
+            return CARRIER_COLLECTED
+        if paid:
+            if channel in {'تحصيل عبر شركة الشحن', 'تحصيل عند الاستلام عبر شركة الشحن'}:
+                return CARRIER_COLLECTED
+            return PREPAID
+        return CARRIER_PENDING
+    orders['Carrier_Collection_Status'] = orders.apply(_normalized_carrier_state, axis=1)
     orders['Payment_Channel'] = orders.apply(
         lambda row: str(row.get('Payment_Channel') or ('دفع مباشر إلى لبانور' if str(row.get('Order_Payment')) == 'تم الدفع' else 'تحصيل عند الاستلام عبر شركة الشحن')),
         axis=1
@@ -927,8 +930,8 @@ def get_cargo_summary_df(orders_df):
             'مبيعات المنتجات (ر.ع)': products_sales,
             'مدفوع من العميل (ر.ع)': collected_products,
             'لم يدفعه العميل بعد (ر.ع)': uncollected_products,
-            'تم تحصيله بواسطة الشحن ولم يورد (ر.ع)': float(group.loc[group['Carrier_Collection_Status'].astype(str).eq('تم التحصيل من العميل - بانتظار التوريد'), 'Products_Total'].sum()) if 'Carrier_Collection_Status' in group.columns else 0.0,
-            'تم توريده إلى لبانور (ر.ع)': float(group.loc[group['Carrier_Collection_Status'].astype(str).eq('تم التوريد إلى لبانور'), 'Products_Total'].sum()) if 'Carrier_Collection_Status' in group.columns else 0.0,
+            'قيد التحصيل من شركة الشحن (ر.ع)': float(group.loc[group['Carrier_Collection_Status'].astype(str).eq('قيد التحصيل من شركة الشحن'), 'Products_Total'].sum()) if 'Carrier_Collection_Status' in group.columns else 0.0,
+            'تم التحصيل من شركة الشحن (ر.ع)': float(group.loc[group['Carrier_Collection_Status'].astype(str).eq('تم التحصيل من شركة الشحن'), 'Products_Total'].sum()) if 'Carrier_Collection_Status' in group.columns else 0.0,
             'رسوم الشحن المحصلة للشركة (معلومة فقط)': shipping_collected,
             'رسوم الشحن غير المحصلة للشركة (معلومة فقط)': shipping_pending,
         })
@@ -945,9 +948,9 @@ if menu == "اللوحة الرئيسية":
     paid_mask = orders_df['Order_Payment'].astype(str).eq('تم الدفع') if not orders_df.empty else pd.Series(dtype=bool)
     if not orders_df.empty:
         direct_paid = orders_df.get('Payment_Channel', pd.Series('دفع مباشر إلى لبانور', index=orders_df.index)).astype(str).eq('دفع مباشر إلى لبانور')
-        carrier_remitted = orders_df.get('Carrier_Collection_Status', pd.Series('', index=orders_df.index)).astype(str).eq('تم التوريد إلى لبانور')
+        carrier_remitted = pd.Series(False, index=orders_df.index)  # Carrier collections are not treasury receipts until separately remitted
         received_by_lubanur_mask = paid_mask & (direct_paid | carrier_remitted)
-        carrier_remittance_pending_mask = orders_df.get('Carrier_Collection_Status', pd.Series('', index=orders_df.index)).astype(str).eq('تم التحصيل من العميل - بانتظار التوريد')
+        carrier_remittance_pending_mask = orders_df.get('Carrier_Collection_Status', pd.Series('', index=orders_df.index)).astype(str).eq('تم التحصيل من شركة الشحن')
         collected_products_total = pd.to_numeric(orders_df.loc[received_by_lubanur_mask, 'Products_Total'], errors='coerce').fillna(0).sum()
         pending_products_total = pd.to_numeric(orders_df.loc[~paid_mask, 'Products_Total'], errors='coerce').fillna(0).sum()
         carrier_remittance_pending_total = pd.to_numeric(orders_df.loc[carrier_remittance_pending_mask, 'Products_Total'], errors='coerce').fillna(0).sum()
@@ -967,7 +970,7 @@ if menu == "اللوحة الرئيسية":
 
     st.markdown("---")
     sc1, sc2 = st.columns(2)
-    sc1.metric("⏳ لم يدفعها العميل بعد", f"{pending_products_total:.3f} ر.ع", f"محصل بواسطة شركة الشحن ولم يورد: {carrier_remittance_pending_total:.3f} ر.ع")
+    sc1.metric("⏳ لم يدفعها العميل بعد", f"{pending_products_total:.3f} ر.ع", f"تم تحصيله بواسطة شركة الشحن: {carrier_remittance_pending_total:.3f} ر.ع")
     sc2.metric("🚚 رسوم الشحن الخاصة بشركات الشحن (خارج الحسابات)", f"مدفوع: {shipping_paid:.3f} | متبقٍ: {shipping_unpaid:.3f} ر.ع", f"الإجمالي: {total_shipping:.3f} ر.ع — لا يدخل في حسابات لبانور")
 
     st.markdown("---")
@@ -1063,7 +1066,7 @@ elif menu == "تسجيل طلب جديد":
                         "Order_Payment": order_payment, "Shipping_Payment": shipping_payment, "Cargo_Company": cargo_company, "Delivery_Type": delivery_type,
                         "Delivery_Status": "قيد التحضير", "Collection_Status": coll_status,
                         "Payment_Channel": "دفع مباشر إلى لبانور" if order_payment == "تم الدفع" else "تحصيل عند الاستلام عبر شركة الشحن",
-                        "Carrier_Collection_Status": "غير مطلوب - دفع مباشر مسبقاً" if order_payment == "تم الدفع" else "لم يُسلّم لشركة الشحن",
+                        "Carrier_Collection_Status": "تم الدفع مسبقاً" if order_payment == "تم الدفع" else "قيد التحصيل من شركة الشحن",
                         "Bags": bags, "Cargo_Barcode": ""
                     }
                 
@@ -1229,15 +1232,15 @@ elif menu == "تتبع الشحنات والتحصيل":
                 s_i = shipping_pay_options.index(cur_s_pay) if cur_s_pay in shipping_pay_options else 0
                 new_s_pay = q_col3.selectbox("دفع الشحن", shipping_pay_options, index=s_i)
                 
-                st.caption("حالة دفع الفاتورة مستقلة عن حالة تحصيل شركة الشحن وتوريد الأموال إلى لبانور.")
+                st.caption("إذا تم دفع الفاتورة عند إنشائها اختر (تم الدفع مسبقاً). وإذا لم تُدفع، اختر قيد التحصيل أو تم التحصيل من شركة الشحن حسب الواقع.")
                 carrier_status_options = [
-                    "غير مطلوب - دفع مباشر مسبقاً", "لم يُسلّم لشركة الشحن",
-                    "قيد التحصيل لدى شركة الشحن", "تم التحصيل من العميل - بانتظار التوريد",
-                    "تم التوريد إلى لبانور"
+                    "تم الدفع مسبقاً",
+                    "قيد التحصيل من شركة الشحن",
+                    "تم التحصيل من شركة الشحن"
                 ]
-                cur_carrier_status = str(target_order_row.get('Carrier_Collection_Status', 'لم يُسلّم لشركة الشحن'))
+                cur_carrier_status = str(target_order_row.get('Carrier_Collection_Status', 'قيد التحصيل من شركة الشحن'))
                 carrier_idx = carrier_status_options.index(cur_carrier_status) if cur_carrier_status in carrier_status_options else 0
-                new_carrier_status = st.selectbox("حالة تحصيل شركة الشحن وتوريد المبلغ", carrier_status_options, index=carrier_idx)
+                new_carrier_status = st.selectbox("حالة تحصيل شركة الشحن", carrier_status_options, index=carrier_idx)
                 new_barcode_val = st.text_input("تعديل باركود شركة الشحن", value=str(target_order_row.get('Cargo_Barcode', '')))
                 
                 if st.form_submit_button("💾 حفظ وتحديث حالة الطلبية فوراً"):
@@ -1245,21 +1248,20 @@ elif menu == "تتبع الشحنات والتحصيل":
                     orders_df.loc[orig_idx, 'Order_Payment'] = new_o_pay
                     orders_df.loc[orig_idx, 'Shipping_Payment'] = new_s_pay
                     orders_df.loc[orig_idx, 'Collection_Status'] = 'مدفوع بالكامل' if new_o_pay == 'تم الدفع' else 'قيد التحصيل'
-                    # Prevent a prepaid invoice from being marked as awaiting courier collection.
-                    if new_o_pay == 'تم الدفع' and new_carrier_status in {'لم يُسلّم لشركة الشحن', 'قيد التحصيل لدى شركة الشحن'}:
-                        new_carrier_status = 'غير مطلوب - دفع مباشر مسبقاً'
-                    elif new_o_pay == 'لم يتم الدفع' and new_d_stat in {'تم التسليم لشركة الشحن', 'جاري التوصيل', 'تم تسليم العميل'} and new_carrier_status == 'لم يُسلّم لشركة الشحن':
-                        new_carrier_status = 'قيد التحصيل لدى شركة الشحن'
-                    orders_df.loc[orig_idx, 'Carrier_Collection_Status'] = new_carrier_status
-                    if new_carrier_status == 'غير مطلوب - دفع مباشر مسبقاً':
-                        orders_df.loc[orig_idx, 'Order_Payment'] = 'تم الدفع'
-                        orders_df.loc[orig_idx, 'Payment_Channel'] = 'دفع مباشر إلى لبانور'
-                    elif new_carrier_status == 'قيد التحصيل لدى شركة الشحن':
-                        orders_df.loc[orig_idx, 'Order_Payment'] = 'لم يتم الدفع'
-                        orders_df.loc[orig_idx, 'Payment_Channel'] = 'تحصيل عند الاستلام عبر شركة الشحن'
-                    elif new_carrier_status in {'تم التحصيل من العميل - بانتظار التوريد', 'تم التوريد إلى لبانور'}:
+                    # Enforce the three-state model and keep invoice payment consistent.
+                    if new_carrier_status == 'تم التحصيل من شركة الشحن':
+                        # Carrier collection takes precedence over the paid flag shown on the invoice.
                         orders_df.loc[orig_idx, 'Order_Payment'] = 'تم الدفع'
                         orders_df.loc[orig_idx, 'Payment_Channel'] = 'تحصيل عبر شركة الشحن'
+                    elif new_o_pay == 'تم الدفع' or new_carrier_status == 'تم الدفع مسبقاً':
+                        new_carrier_status = 'تم الدفع مسبقاً'
+                        orders_df.loc[orig_idx, 'Order_Payment'] = 'تم الدفع'
+                        orders_df.loc[orig_idx, 'Payment_Channel'] = 'دفع مباشر إلى لبانور'
+                    else:
+                        new_carrier_status = 'قيد التحصيل من شركة الشحن'
+                        orders_df.loc[orig_idx, 'Order_Payment'] = 'لم يتم الدفع'
+                        orders_df.loc[orig_idx, 'Payment_Channel'] = 'تحصيل عند الاستلام عبر شركة الشحن'
+                    orders_df.loc[orig_idx, 'Carrier_Collection_Status'] = new_carrier_status
                     orders_df.loc[orig_idx, 'Collection_Status'] = 'مدفوع بالكامل' if str(orders_df.loc[orig_idx, 'Order_Payment']) == 'تم الدفع' else 'قيد التحصيل'
                     orders_df.loc[orig_idx, 'Cargo_Barcode'] = new_barcode_val
                     
@@ -1487,8 +1489,9 @@ elif menu == "تقرير الشحن":
                 "حالة التحصيل لدى شركة الشحن": filtered_cargo_df['Carrier_Collection_Status'],
                 "طريقة الدفع": filtered_cargo_df['Payment_Channel'],
                 "مدفوع من العميل (ر.ع)": filtered_cargo_df.apply(lambda r: r['Products_Total'] if str(r['Order_Payment']) == 'تم الدفع' else 0, axis=1),
-                "بانتظار توريد شركة الشحن (ر.ع)": filtered_cargo_df.apply(lambda r: r['Products_Total'] if str(r.get('Carrier_Collection_Status', '')) == 'تم التحصيل من العميل - بانتظار التوريد' else 0, axis=1),
-                "تم توريده إلى لبانور (ر.ع)": filtered_cargo_df.apply(lambda r: r['Products_Total'] if str(r.get('Carrier_Collection_Status', '')) == 'تم التوريد إلى لبانور' or str(r.get('Payment_Channel', '')) == 'دفع مباشر إلى لبانور' and str(r['Order_Payment']) == 'تم الدفع' else 0, axis=1),
+                "قيد التحصيل من شركة الشحن (ر.ع)": filtered_cargo_df.apply(lambda r: r['Products_Total'] if str(r.get('Carrier_Collection_Status', '')) == 'قيد التحصيل من شركة الشحن' else 0, axis=1),
+                "تم التحصيل من شركة الشحن (ر.ع)": filtered_cargo_df.apply(lambda r: r['Products_Total'] if str(r.get('Carrier_Collection_Status', '')) == 'تم التحصيل من شركة الشحن' else 0, axis=1),
+                "مدفوع مسبقاً إلى لبانور (ر.ع)": filtered_cargo_df.apply(lambda r: r['Products_Total'] if str(r.get('Carrier_Collection_Status', '')) == 'تم الدفع مسبقاً' else 0, axis=1),
                 "المتبقي على العميل (ر.ع)": filtered_cargo_df.apply(lambda r: r['Products_Total'] if str(r['Order_Payment']) != 'تم الدفع' else 0, axis=1),
                 "رسوم الشحن (للشركة مباشرة - خارج إيرادات لبانور)": filtered_cargo_df['Shipping_Price'],
                 "حالة دفع الشحن": filtered_cargo_df['Shipping_Payment'],
@@ -1496,7 +1499,7 @@ elif menu == "تقرير الشحن":
             })
 
             st.markdown(f"### 📋 بيان شحنات شركة: **{selected_cargo}** (إجمالي الشحنات: {len(report_display_df)})")
-            st.caption("حالة تسليم العميل وحالة تحصيل شركة الشحن وتوريد الأموال موضحة لكل فاتورة بشكل مستقل. رسوم الشحن تخص شركة الشحن ولا تدخل في إيرادات لبانور.")
+            st.caption("حالة التوصيل وحالة تحصيل شركة الشحن موضحتان لكل فاتورة. المبالغ المحصلة بواسطة شركة الشحن ليست إيداعاً في خزينة لبانور حتى يتم توريدها فعلياً.")
             # Restore native interactive dataframe behavior:
             # users choose visible columns, resize column headers directly,
             # and swipe/scroll horizontally when the table is wider than the screen.
@@ -1527,7 +1530,7 @@ elif menu == "تقرير الشحن":
             st.markdown("#### ملخص حساب المنتجات لدى شركة الشحن")
             k1, k2, k3 = st.columns(3)
             k1.metric("مبيعات المنتجات", f"{products_sales:.3f} ر.ع")
-            carrier_waiting = pd.to_numeric(filtered_cargo_df.loc[filtered_cargo_df['Carrier_Collection_Status'].astype(str).eq('تم التحصيل من العميل - بانتظار التوريد'), 'Products_Total'], errors='coerce').fillna(0).sum()
+            carrier_waiting = pd.to_numeric(filtered_cargo_df.loc[filtered_cargo_df['Carrier_Collection_Status'].astype(str).eq('قيد التحصيل من شركة الشحن'), 'Products_Total'], errors='coerce').fillna(0).sum()
             k2.metric("مدفوع من العميل", f"{products_collected:.3f} ر.ع")
             k3.metric("لم يدفعه العميل بعد", f"{products_pending:.3f} ر.ع", f"بانتظار توريد الشحن: {carrier_waiting:.3f} ر.ع")
             st.caption("رسوم الشحن معروضة للمراجعة التشغيلية فقط؛ فهي تخص شركة الشحن ولا تدخل في إيرادات لبانور أو تحصيل المنتجات. إجمالي الفاتورة قد يعرضها للعميل كبند منفصل، لكن التقارير المالية تحتسب قيمة المنتجات فقط.")
@@ -1675,11 +1678,11 @@ elif menu == "تعديل وحذف الفواتير":
                 orders_df.loc[orders_df['Order_ID'] == edit_order_id, 'Shipping_Payment'] = e_shp_pay
                 if e_ord_pay == 'تم الدفع' and str(target_row.get('Payment_Channel', '')) != 'تحصيل عبر شركة الشحن':
                     orders_df.loc[orders_df['Order_ID'] == edit_order_id, 'Payment_Channel'] = 'دفع مباشر إلى لبانور'
-                    orders_df.loc[orders_df['Order_ID'] == edit_order_id, 'Carrier_Collection_Status'] = 'غير مطلوب - دفع مباشر مسبقاً'
+                    orders_df.loc[orders_df['Order_ID'] == edit_order_id, 'Carrier_Collection_Status'] = 'تم الدفع مسبقاً'
                 elif e_ord_pay == 'لم يتم الدفع':
                     orders_df.loc[orders_df['Order_ID'] == edit_order_id, 'Payment_Channel'] = 'تحصيل عند الاستلام عبر شركة الشحن'
                     if str(target_row.get('Delivery_Status', '')) in {'تم التسليم لشركة الشحن', 'جاري التوصيل', 'تم تسليم العميل'}:
-                        orders_df.loc[orders_df['Order_ID'] == edit_order_id, 'Carrier_Collection_Status'] = 'قيد التحصيل لدى شركة الشحن'
+                        orders_df.loc[orders_df['Order_ID'] == edit_order_id, 'Carrier_Collection_Status'] = 'قيد التحصيل من شركة الشحن'
                 
                 # Collection of product value depends only on Order_Payment; shipping payment is separate.
                 new_coll_status = "مدفوع بالكامل" if e_ord_pay == "تم الدفع" else "قيد التحصيل"
