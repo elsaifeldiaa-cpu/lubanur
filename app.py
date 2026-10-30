@@ -15,7 +15,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# === صلاحيات المستخدمين: مدير واحد + مستخدمون للعرض فقط ===
+# === إعدادات كلمات المرور وصلاحيات النظام ===
 def get_secret(name, default=""):
     try:
         value = st.secrets.get(name, default)
@@ -30,67 +30,99 @@ if not ADMIN_PASSWORD or not VIEWER_PASSWORD:
     st.code('ADMIN_PASSWORD = "كلمة_مرور_المدير"\nVIEWER_PASSWORD = "كلمة_مرور_المشاهد"\nGITHUB_TOKEN = "توكن_خاص"\nGITHUB_REPO = "elsaifeldiaa-cpu/lubanur"\nGITHUB_BRANCH = "main"\nGITHUB_EXCEL_PATH = "system_database.xlsx"', language="toml")
     st.stop()
 
-# الاحتفاظ بمرجع الأزرار الأصلي قبل التغليف بالصلاحيات
+# الاحتفاظ بمرجع الأزرار الأصلي لمنع أي قيود تعطل زر الدخول
 _raw_streamlit_button = st.button
 _raw_streamlit_form_submit = st.form_submit_button
 
 if "user_role" not in st.session_state:
     st.session_state.user_role = None
 
-# === شاشة تسجيل الدخول الأنيقة والمستقلة عن قيود الصلاحيات ===
+# === تصميم شاشة تسجيل الدخول المطورة بالكامل (مع قائمة منسدلة لاختيار المستخدم وصندوق مركزي) ===
 if st.session_state.user_role is None:
     st.markdown("""
         <style>
         .stApp {
-            background-color: #f4f6f9;
+            background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
         }
-        .login-card {
+        .login-card-container {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            margin-top: 60px;
+        }
+        .login-box {
             background: #ffffff;
-            padding: 35px 25px;
-            border-radius: 14px;
-            box-shadow: 0 4px 15px rgba(0,0,0,0.08);
-            max-width: 400px;
-            margin: 50px auto 20px auto;
+            padding: 40px 30px;
+            border-radius: 16px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.1);
+            width: 100%;
+            max-width: 440px;
             direction: rtl;
             text-align: right;
-            border-top: 4px solid #007bff;
+            border-top: 6px solid #007bff;
+        }
+        .login-header {
+            text-align: center;
+            color: #2c3e50;
+            font-size: 24px;
+            font-weight: bold;
+            margin-bottom: 5px;
+        }
+        .login-sub {
+            text-align: center;
+            color: #7f8c8d;
+            font-size: 13px;
+            margin-bottom: 25px;
         }
         </style>
     """, unsafe_allow_html=True)
 
-    col1, col2, col3 = st.columns([1, 2, 1])
-    with col2:
-        st.markdown("<div class='login-card'>", unsafe_allow_html=True)
-        st.markdown("<h3 style='text-align: center; color: #2c3e50;'>🔐 تسجيل الدخول لنظام لبانور</h3>", unsafe_allow_html=True)
-        st.markdown("<p style='text-align: center; color: #777; font-size: 13px;'>السيف والضياء للاستثمار الدولي</p>", unsafe_allow_html=True)
+    # استخدام الأعمدة لتوسيط الصندوق تماماً في وسط الشاشة بدون تمدد
+    col_l1, col_l2, col_l3 = st.columns([1, 1.2, 1])
+    with col_l2:
+        st.markdown("""
+            <div class="login-box">
+                <div class="login-header">🔐 تسجيل الدخول لنظام لبانور</div>
+                <div class="login-sub">السيف والضياء للاستثمار الدولي</div>
+        """, unsafe_allow_html=True)
         
-        entered_pwd = st.text_input("كلمة المرور", type="password", key="login_pass_input_unique")
-        st.markdown("<div style='height: 15px;'></div>", unsafe_allow_html=True)
+        # قائمة منسدلة لاختيار اسم المستخدم / نوع الحساب لضمان التفعيل الدقيق
+        selected_user_type = st.selectbox(
+            "اختر حساب المستخدم (User Role)",
+            ["👑 مدير النظام (Admin)", "👁️ مستخدم العرض فقط (Viewer)"],
+            key="login_user_dropdown"
+        )
         
-        # استخدام الزر الأصلي المباشر لمنع تحويله لـ Disabled
-        login_clicked = _raw_streamlit_button("دخول للنظام", use_container_width=True, key="unique_login_button")
+        entered_pwd = st.text_input("كلمة المرور (Password)", type="password", key="login_pass_input_field")
+        st.markdown("<div style='height: 10px;'></div>", unsafe_allow_html=True)
+        
+        # زر الدخول الأساسي والمضمون بعيداً عن أي قيود
+        login_clicked = _raw_streamlit_button("🚀 دخول النظام", use_container_width=True, key="active_login_btn_click")
+        
         st.markdown("</div>", unsafe_allow_html=True)
 
         if login_clicked:
             if not entered_pwd:
                 st.warning("⚠️ الرجاء إدخال كلمة المرور أولاً.")
-            elif entered_pwd == ADMIN_PASSWORD:
-                st.session_state.user_role = "admin"
-                st.session_state.authenticated = True
-                st.session_state.login_event_pending = "تسجيل دخول المدير"
-                st.rerun()
-            elif entered_pwd == VIEWER_PASSWORD:
-                st.session_state.user_role = "viewer"
-                st.session_state.authenticated = True
-                st.session_state.login_event_pending = "تسجيل دخول مستخدم العرض"
-                st.rerun()
             else:
-                st.error("❌ كلمة المرور غير صحيحة.")
+                is_admin_choice = "مدير النظام" in selected_user_type
+                if is_admin_choice and entered_pwd == ADMIN_PASSWORD:
+                    st.session_state.user_role = "admin"
+                    st.session_state.authenticated = True
+                    st.session_state.login_event_pending = "تسجيل دخول المدير"
+                    st.rerun()
+                elif (not is_admin_choice) and entered_pwd == VIEWER_PASSWORD:
+                    st.session_state.user_role = "viewer"
+                    st.session_state.authenticated = True
+                    st.session_state.login_event_pending = "تسجيل دخول مستخدم العرض"
+                    st.rerun()
+                else:
+                    st.error("❌ كلمة المرور غير صحيحة للحساب المختار.")
     st.stop()
 
 IS_ADMIN = st.session_state.user_role == "admin"
 
-# === تفعيل حماية الأزرار بعد اجتياز شاشة تسجيل الدخول فقط ===
+# === تفعيل حماية الأزرار بعد تسجيل الدخول الناجح فقط ===
 def _permission_button(*args, **kwargs):
     if not IS_ADMIN:
         kwargs["disabled"] = True
@@ -103,7 +135,7 @@ def _permission_form_submit(*args, **kwargs):
     return _raw_streamlit_form_submit(*args, **kwargs)
 st.form_submit_button = _permission_form_submit
 
-# === تخصيص CSS لمظهر عصري وواضح (Elite UI) ===
+# === تخصيص واجهة التطبيق بشكل عصري ===
 st.markdown("""
     <style>
     .main {
