@@ -15,7 +15,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# === إعدادات كلمات المرور وصلاحيات النظام ===
+# === صلاحيات المستخدمين: مدير واحد + مستخدمون للعرض فقط ===
 def get_secret(name, default=""):
     try:
         value = st.secrets.get(name, default)
@@ -30,143 +30,188 @@ if not ADMIN_PASSWORD or not VIEWER_PASSWORD:
     st.code('ADMIN_PASSWORD = "كلمة_مرور_المدير"\nVIEWER_PASSWORD = "كلمة_مرور_المشاهد"\nGITHUB_TOKEN = "توكن_خاص"\nGITHUB_REPO = "elsaifeldiaa-cpu/lubanur"\nGITHUB_BRANCH = "main"\nGITHUB_EXCEL_PATH = "system_database.xlsx"', language="toml")
     st.stop()
 
-# الاحتفاظ بمرجع الأزرار الأصلي لمنع أي قيود تعطل زر الدخول
-_raw_streamlit_button = st.button
-_raw_streamlit_form_submit = st.form_submit_button
-
 if "user_role" not in st.session_state:
     st.session_state.user_role = None
 
-# === تصميم شاشة تسجيل الدخول المطورة بالكامل (مع قائمة منسدلة لاختيار المستخدم وصندوق مركزي) ===
 if st.session_state.user_role is None:
+    # A centered, branded login panel. The form keeps password + submit in one request.
     st.markdown("""
         <style>
         .stApp {
-            background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+            background:
+                radial-gradient(circle at 50% 8%, rgba(190, 153, 75, .14), transparent 34%),
+                linear-gradient(135deg, #f7f8fb 0%, #eef1f6 100%);
         }
-        .login-card-container {
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            margin-top: 60px;
+        [data-testid="stHeader"] { background: transparent; }
+        [data-testid="stMainBlockContainer"] {
+            max-width: 1120px;
+            padding-top: 5vh;
         }
-        .login-box {
-            background: #ffffff;
-            padding: 40px 30px;
-            border-radius: 16px;
-            box-shadow: 0 10px 30px rgba(0,0,0,0.1);
-            width: 100%;
-            max-width: 440px;
+        .login-brand {
+            text-align: center;
             direction: rtl;
+            margin: 1.2rem 0 1.5rem;
+        }
+        .login-brand .mark {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 66px;
+            height: 66px;
+            border-radius: 20px;
+            background: linear-gradient(145deg, #14243b, #243d5b);
+            color: #e3c47d;
+            font-size: 32px;
+            box-shadow: 0 12px 28px rgba(20, 36, 59, .18);
+            margin-bottom: 12px;
+        }
+        .login-brand h1 {
+            color: #17283f;
+            font-size: clamp(25px, 3vw, 34px);
+            font-weight: 800;
+            margin: 0 0 7px;
+        }
+        .login-brand p {
+            color: #687589;
+            font-size: 15px;
+            margin: 0;
+        }
+        [data-testid="stForm"] {
+            background: rgba(255,255,255,.96);
+            border: 1px solid #e4e8ef;
+            border-radius: 20px;
+            padding: 28px 30px 24px;
+            box-shadow: 0 18px 48px rgba(25, 39, 60, .09);
+        }
+        [data-testid="stTextInput"] label {
+            color: #24364e;
+            font-weight: 700;
+            direction: rtl;
+        }
+        [data-testid="stTextInput"] input {
+            min-height: 48px;
+            border-radius: 11px;
+            border: 1px solid #d8dee8;
+            background: #f9fafc;
             text-align: right;
-            border-top: 6px solid #007bff;
+            direction: rtl;
         }
-        .login-header {
-            text-align: center;
-            color: #2c3e50;
-            font-size: 24px;
-            font-weight: bold;
-            margin-bottom: 5px;
+        [data-testid="stTextInput"] input:focus {
+            border-color: #bd984f;
+            box-shadow: 0 0 0 2px rgba(189,152,79,.15);
         }
-        .login-sub {
+        [data-testid="stFormSubmitButton"] button {
+            min-height: 48px;
+            border: 0;
+            border-radius: 11px;
+            color: #fff;
+            font-weight: 800;
+            background: linear-gradient(110deg, #172a43, #294866);
+            transition: transform .15s ease, box-shadow .15s ease;
+        }
+        [data-testid="stFormSubmitButton"] button:hover {
+            color: #fff;
+            border: 0;
+            box-shadow: 0 8px 20px rgba(23,42,67,.2);
+            transform: translateY(-1px);
+        }
+        .login-footnote {
             text-align: center;
-            color: #7f8c8d;
-            font-size: 13px;
-            margin-bottom: 25px;
+            color: #8490a0;
+            font-size: 12px;
+            margin-top: 16px;
         }
         </style>
     """, unsafe_allow_html=True)
 
-    # استخدام الأعمدة لتوسيط الصندوق تماماً في وسط الشاشة بدون تمدد
-    col_l1, col_l2, col_l3 = st.columns([1, 1.2, 1])
-    with col_l2:
-        st.markdown("""
-            <div class="login-box">
-                <div class="login-header">🔐 تسجيل الدخول لنظام لبانور</div>
-                <div class="login-sub">السيف والضياء للاستثمار الدولي</div>
-        """, unsafe_allow_html=True)
-        
-        # قائمة منسدلة لاختيار اسم المستخدم / نوع الحساب لضمان التفعيل الدقيق
-        selected_user_type = st.selectbox(
-            "اختر حساب المستخدم (User Role)",
-            ["👑 مدير النظام (Admin)", "👁️ مستخدم العرض فقط (Viewer)"],
-            key="login_user_dropdown"
-        )
-        
-        entered_pwd = st.text_input("كلمة المرور (Password)", type="password", key="login_pass_input_field")
-        st.markdown("<div style='height: 10px;'></div>", unsafe_allow_html=True)
-        
-        # زر الدخول الأساسي والمضمون بعيداً عن أي قيود
-        login_clicked = _raw_streamlit_button("🚀 دخول النظام", use_container_width=True, key="active_login_btn_click")
-        
-        st.markdown("</div>", unsafe_allow_html=True)
+    st.markdown("""
+        <div class="login-brand">
+            <div class="mark">🌿</div>
+            <h1>لبانور</h1>
+            <p>نظام إدارة الطلبات والمخزون</p>
+        </div>
+    """, unsafe_allow_html=True)
 
-        if login_clicked:
-            if not entered_pwd:
-                st.warning("⚠️ الرجاء إدخال كلمة المرور أولاً.")
+    left, center, right = st.columns([1, 1.15, 1])
+    with center:
+        with st.form("lubanur_login_form", clear_on_submit=False):
+            st.markdown("### تسجيل الدخول")
+            st.caption("أدخل كلمة المرور للمتابعة إلى لوحة النظام.")
+            pwd = st.text_input(
+                "كلمة المرور",
+                type="password",
+                key="login_pass",
+                placeholder="أدخل كلمة المرور هنا",
+                help="استخدم كلمة مرور المدير أو كلمة مرور العرض."
+            )
+            login_submitted = st.form_submit_button(
+                "دخول إلى النظام  ←",
+                type="primary",
+                use_container_width=True
+            )
+
+        if login_submitted:
+            if not pwd:
+                st.warning("يرجى إدخال كلمة المرور أولاً.")
+            elif pwd == ADMIN_PASSWORD:
+                st.session_state.user_role = "admin"
+                st.session_state.authenticated = True
+                st.session_state.login_event_pending = "تسجيل دخول المدير"
+                st.rerun()
+            elif pwd == VIEWER_PASSWORD:
+                st.session_state.user_role = "viewer"
+                st.session_state.authenticated = True
+                st.session_state.login_event_pending = "تسجيل دخول مستخدم العرض"
+                st.rerun()
             else:
-                is_admin_choice = "مدير النظام" in selected_user_type
-                if is_admin_choice and entered_pwd == ADMIN_PASSWORD:
-                    st.session_state.user_role = "admin"
-                    st.session_state.authenticated = True
-                    st.session_state.login_event_pending = "تسجيل دخول المدير"
-                    st.rerun()
-                elif (not is_admin_choice) and entered_pwd == VIEWER_PASSWORD:
-                    st.session_state.user_role = "viewer"
-                    st.session_state.authenticated = True
-                    st.session_state.login_event_pending = "تسجيل دخول مستخدم العرض"
-                    st.rerun()
-                else:
-                    st.error("❌ كلمة المرور غير صحيحة للحساب المختار.")
+                st.error("كلمة المرور غير صحيحة. تحقق منها ثم حاول مرة أخرى.")
+
+    st.markdown(
+        "<div class='login-footnote'>LUBANUR · نظام داخلي آمن لإدارة الأعمال</div>",
+        unsafe_allow_html=True
+    )
     st.stop()
 
 IS_ADMIN = st.session_state.user_role == "admin"
 
-# === تفعيل حماية الأزرار بعد تسجيل الدخول الناجح فقط ===
-def _permission_button(*args, **kwargs):
-    if not IS_ADMIN:
-        kwargs["disabled"] = True
-    return _raw_streamlit_button(*args, **kwargs)
-st.button = _permission_button
-
-def _permission_form_submit(*args, **kwargs):
-    if not IS_ADMIN:
-        kwargs["disabled"] = True
-    return _raw_streamlit_form_submit(*args, **kwargs)
-st.form_submit_button = _permission_form_submit
-
-# === تخصيص واجهة التطبيق بشكل عصري ===
+# === هوية بصرية موحدة: كحلي وذهبي ===
 st.markdown("""
     <style>
-    .main {
-        direction: rtl;
-        text-align: right;
+    .main { direction: rtl; text-align: right; }
+    [data-testid="stAppViewContainer"] { background: #f6f7fa; }
+    [data-testid="stSidebar"] {
+        background: #f0f2f6;
+        border-left: 1px solid #e1e5ec;
     }
-    .stSidebar {
-        background-color: #f8f9fa;
-        padding-top: 10px;
-    }
+    [data-testid="stSidebar"] > div:first-child { padding-top: 1rem; }
     .sidebar-title {
-        font-size: 16px;
-        font-weight: bold;
-        color: #2c3e50;
-        margin-bottom: 10px;
-        text-align: center;
-        border-bottom: 2px solid #007bff;
-        padding-bottom: 8px;
+        font-size: 17px; font-weight: 800; color: #172a43;
+        margin-bottom: 12px; text-align: center;
+        border-bottom: 2px solid #c5a35b; padding-bottom: 12px;
     }
-    .version-tag {
-        font-size: 12px;
-        color: #666;
-        text-align: left;
-        padding: 5px;
+    .version-tag { font-size: 12px; color: #718096; text-align: left; padding: 5px; }
+    h1, h2, h3 { color: #1b2d45; font-weight: 800; }
+    [data-testid="stMetric"] {
+        background: #fff; border: 1px solid #e7eaf0; border-radius: 14px;
+        padding: 14px 16px; box-shadow: 0 3px 12px rgba(25,39,60,.035);
     }
+    [data-testid="stMetricLabel"] { color: #64748b; font-weight: 700; }
+    div.stButton > button, div.stDownloadButton > button {
+        border-radius: 10px; font-weight: 700; min-height: 40px;
+    }
+    div.stButton > button[kind="primary"] { background: #1d3552; border-color: #1d3552; }
+    [data-testid="stDataFrame"], [data-testid="stTable"] {
+        border: 1px solid #e5e9f0; border-radius: 12px; overflow: hidden;
+    }
+    [data-testid="stExpander"] { border: 1px solid #e5e9f0; border-radius: 12px; background: #fff; }
+    hr { border-color: #e3e7ee; }
     </style>
 """, unsafe_allow_html=True)
 
 DB_FILE = "system_database.xlsx"
 ORIGINAL_EXCEL = "System.xlsx"
 
+# GitHub workbook synchronization. Configure these values in Streamlit Secrets.
 GITHUB_TOKEN = get_secret("GITHUB_TOKEN", "")
 GITHUB_REPO = get_secret("GITHUB_REPO", "elsaifeldiaa-cpu/lubanur")
 GITHUB_BRANCH = get_secret("GITHUB_BRANCH", "main")
@@ -195,6 +240,7 @@ def github_api(method, path, payload=None):
         raise RuntimeError(f"GitHub API ({exc.code}): {detail[:500]}") from exc
 
 def github_download_workbook():
+    """Pull the repository's workbook before app initialization."""
     if not GITHUB_TOKEN:
         return False
     try:
@@ -207,12 +253,14 @@ def github_download_workbook():
         os.replace(tmp, DB_FILE)
         return True
     except Exception as exc:
+        # Do not silently replace a valid local workbook with an empty one.
         if os.path.exists(DB_FILE) and os.path.getsize(DB_FILE) > 0:
             st.warning(f"تعذر جلب أحدث Excel من GitHub؛ سيتم فتح النسخة المحلية: {exc}")
             return False
         raise RuntimeError(f"تعذر تنزيل ملف Excel من GitHub: {exc}") from exc
 
 def github_upload_workbook():
+    """Commit the current workbook to GitHub using its current SHA."""
     if not GITHUB_TOKEN:
         raise RuntimeError("لم تتم المزامنة: أضف GITHUB_TOKEN إلى Streamlit Secrets")
     meta = github_api("GET", f"contents/{GITHUB_EXCEL_PATH}?ref={GITHUB_BRANCH}")
@@ -264,7 +312,9 @@ AUDIT_COLUMNS = ["Timestamp", "User_Role", "Session_ID", "Action", "Details", "C
 if "session_id" not in st.session_state:
     st.session_state.session_id = str(uuid.uuid4())[:12]
 
+
 def append_activity_log(path, action, details="", connection_status="غير محدد"):
+    """Append a durable audit row to the workbook without changing business sheets."""
     try:
         if os.path.exists(path) and os.path.getsize(path) > 0:
             wb = load_workbook(path)
@@ -286,7 +336,9 @@ def append_activity_log(path, action, details="", connection_status="غير مح
         wb.save(path)
         wb.close()
     except Exception as exc:
+        # Audit failures must be visible; do not hide them behind a successful business save.
         st.warning(f"تعذر تسجيل حدث في سجل الحركة: {exc}")
+
 
 def read_activity_log(path=DB_FILE):
     try:
@@ -297,6 +349,7 @@ def read_activity_log(path=DB_FILE):
     except Exception as exc:
         st.warning(f"تعذر قراءة سجل الحركة: {exc}")
     return pd.DataFrame(columns=AUDIT_COLUMNS)
+
 
 def normalize_orders_df(orders):
     if orders.empty:
@@ -348,6 +401,7 @@ def normalize_orders_df(orders):
                     orders[col] = orders[col].astype(int)
                     
     orders['Total'] = orders['Products_Total'] + orders['Shipping_Price']
+    # Product collection is determined ONLY by invoice/product payment, never shipping payment.
     orders['Collection_Status'] = orders['Order_Payment'].astype(str).map(
         lambda value: 'مدفوع بالكامل' if value.strip() == 'تم الدفع' else 'قيد التحصيل'
     )
@@ -383,6 +437,9 @@ def item_quantities(items):
     return quantities
 
 def adjust_stock_for_order(stock_df, old_items, new_items):
+    """Apply only the quantity delta between old and new invoice items.
+    Returns (updated_stock, error_message); no changes are applied on insufficient stock.
+    """
     updated = stock_df.copy(deep=True)
     old_q = item_quantities(old_items)
     new_q = item_quantities(new_items)
@@ -396,12 +453,14 @@ def adjust_stock_for_order(stock_df, old_items, new_items):
         qty_value = pd.to_numeric(updated.loc[idx, "Qty"], errors="coerce")
         current_qty = int(qty_value) if pd.notna(qty_value) else 0
         delta = old_q.get(name, 0) - new_q.get(name, 0)
+        # delta > 0 means items were removed from the invoice and stock must be returned.
         if delta < 0 and current_qty < -delta:
             return stock_df, f"الكمية المتاحة من «{name}» غير كافية. المتاح: {current_qty}، المطلوب إضافته للفاتورة: {-delta}."
         updated.loc[idx, "Qty"] = current_qty + delta
     return updated, None
 
 def _read_workbook_safely(path):
+    """Read and validate the required workbook sheets without modifying the source file."""
     if not os.path.exists(path) or os.path.getsize(path) == 0:
         raise RuntimeError(f"ملف قاعدة البيانات غير موجود أو فارغ: {path}")
     xls = pd.ExcelFile(path, engine="openpyxl")
@@ -412,14 +471,16 @@ def _read_workbook_safely(path):
     orders = normalize_orders_df(pd.read_excel(xls, sheet_name="Orders"))
     stock = pd.read_excel(xls, sheet_name="Stock")
     if not {"Item_Name", "Qty"}.issubset(stock.columns):
-        raise RuntimeError("ورقة Stock لا تحتوي على الأعمدة Item_Name و Qty.")
+        raise RuntimeError("ورقة Stock لا تحتوي على الأعمدة Item_Name و Qty. لم يتم تعديل الملف الأصلي.")
     expenses = pd.read_excel(xls, sheet_name="Expenses")
     cargo_df = pd.read_excel(xls, sheet_name="Cargo_Companies")
     if "Cargo_Name" not in cargo_df.columns:
-        raise RuntimeError("ورقة Cargo_Companies لا تحتوي على العمود Cargo_Name.")
+        raise RuntimeError("ورقة Cargo_Companies لا تحتوي على العمود Cargo_Name. لم يتم تعديل الملف الأصلي.")
     return orders, stock, expenses, cargo_df
 
+
 def save_all_data(orders_df, stock_df, expenses_df, cargo_companies_list, product_costs_df=None):
+    """Save locally, back up, then synchronize the committed workbook to GitHub."""
     if not IS_ADMIN:
         raise PermissionError("حساب العرض فقط؛ لا يملك صلاحية تعديل البيانات.")
     db_dir = os.path.dirname(os.path.abspath(DB_FILE))
@@ -429,6 +490,7 @@ def save_all_data(orders_df, stock_df, expenses_df, cargo_companies_list, produc
     if product_costs_df is None:
         product_costs_df = load_product_costs(DB_FILE)
 
+    # Never overwrite an unreadable source workbook. A bad read must be investigated first.
     if os.path.exists(DB_FILE) and os.path.getsize(DB_FILE) > 0:
         try:
             old_orders, _, _, _ = _read_workbook_safely(DB_FILE)
@@ -436,10 +498,11 @@ def save_all_data(orders_df, stock_df, expenses_df, cargo_companies_list, produc
             raise RuntimeError(f"تم إيقاف الحفظ لحماية البيانات؛ تعذرت قراءة قاعدة البيانات الحالية: {exc}") from exc
         old_count = len(old_orders)
         new_count = len(orders_df)
+        # Individual invoice deletion is supported; a sudden drop by more than one invoice is blocked.
         if old_count - new_count > 1:
             raise RuntimeError(
                 f"تم إيقاف الحفظ لحماية الفواتير: عدد الفواتير الحالية {old_count} والجديدة {new_count}. "
-                "الانخفاض أكبر من فاتورة واحدة. لم يتم استبدال قاعدة البيانات."
+                "الانخفاض أكبر من فاتورة واحدة. لم يتم استبدال قاعدة البيانات. راجع البيانات أو استعد نسخة احتياطية صحيحة."
             )
         os.makedirs(backup_dir, exist_ok=True)
         stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f")
@@ -467,6 +530,7 @@ def save_all_data(orders_df, stock_df, expenses_df, cargo_companies_list, produc
                 "Connection_Status": "جارٍ مزامنة GitHub"
             }])
             pd.concat([existing_log, new_log], ignore_index=True).to_excel(writer, sheet_name=AUDIT_SHEET, index=False)
+        # Verify the temporary workbook before replacing the active database.
         _read_workbook_safely(temp_path)
         os.replace(temp_path, DB_FILE)
         try:
@@ -480,16 +544,23 @@ def save_all_data(orders_df, stock_df, expenses_df, cargo_companies_list, produc
             os.remove(temp_path)
     st.cache_data.clear()
 
+
 def init_db():
+    """Initialize only a genuinely new database; never replace an existing broken database."""
     marker_file = ".system_database_initialized"
     if os.path.exists(DB_FILE) and os.path.getsize(DB_FILE) > 0:
+        # Validate existing data; any error stops startup without overwriting the source.
         _read_workbook_safely(DB_FILE)
         with open(marker_file, "w", encoding="utf-8") as marker:
             marker.write("initialized\n")
         return
 
+    # If the database existed previously, its disappearance must not trigger an empty replacement.
     if os.path.exists(marker_file):
-        raise RuntimeError("ملف system_database.xlsx مفقود أو فارغ رغم أن النظام سبق تهيئته.")
+        raise RuntimeError(
+            "ملف system_database.xlsx مفقود أو فارغ رغم أن النظام سبق تهيئته. "
+            "تم إيقاف التشغيل لمنع إنشاء قاعدة بيانات جديدة وفقدان الفواتير. أعد الملف من نسخة احتياطية."
+        )
 
     if os.path.exists(ORIGINAL_EXCEL) and os.path.getsize(ORIGINAL_EXCEL) > 0:
         try:
@@ -497,7 +568,9 @@ def init_db():
             stock = pd.read_excel(xls_orig, sheet_name="Stock +").groupby("Item Name")["Qty"].sum().reset_index()
             stock.columns = ["Item_Name", "Qty"]
         except Exception as exc:
-            raise RuntimeError(f"تعذرت قراءة ملف التأسيس {ORIGINAL_EXCEL}: {exc}") from exc
+            raise RuntimeError(
+                f"تعذرت قراءة ملف التأسيس {ORIGINAL_EXCEL}: {exc}. لم يتم إنشاء قاعدة بيانات فارغة."
+            ) from exc
     else:
         stock = pd.DataFrame({"Item_Name": EXACT_ITEMS, "Qty": [50] * len(EXACT_ITEMS)})
 
@@ -520,6 +593,7 @@ def init_db():
         if os.path.exists(temp_path):
             os.remove(temp_path)
 
+
 try:
     GITHUB_DATA_LOADED = github_download_workbook()
     init_db()
@@ -528,7 +602,9 @@ except Exception as db_init_error:
     st.exception(db_init_error)
     st.stop()
 
+
 def load_product_costs(path=DB_FILE):
+    """Read private product unit costs from their dedicated workbook sheet."""
     try:
         xls = pd.ExcelFile(path, engine="openpyxl")
         if "Product_Costs" in xls.sheet_names:
@@ -544,6 +620,7 @@ def load_product_costs(path=DB_FILE):
     costs["Item_Name"] = costs["Item_Name"].astype(str).str.strip()
     costs["Unit_Cost"] = pd.to_numeric(costs["Unit_Cost"], errors="coerce").fillna(0.0)
     return costs[costs["Item_Name"] != ""].drop_duplicates("Item_Name", keep="last").reset_index(drop=True)
+
 
 def calculate_profitability(orders_df, costs_df, expenses_df):
     cost_map = dict(zip(costs_df["Item_Name"].astype(str), pd.to_numeric(costs_df["Unit_Cost"], errors="coerce").fillna(0.0)))
@@ -565,12 +642,13 @@ def calculate_profitability(orders_df, costs_df, expenses_df):
     expenses = pd.to_numeric(expenses_df.get("Amount", pd.Series(dtype=float)), errors="coerce").fillna(0).sum()
     return pd.DataFrame(rows), float(sales), float(total_cogs), float(expenses)
 
+
 def load_data():
     st.cache_data.clear()
     try:
         orders, stock, expenses, cargo_df = _read_workbook_safely(DB_FILE)
     except Exception as exc:
-        st.error("تعذر تحميل قاعدة البيانات.")
+        st.error("تعذر تحميل قاعدة البيانات. أوقف النظام الحفظ لحماية الفواتير الحالية.")
         st.exception(exc)
         st.stop()
 
@@ -689,6 +767,21 @@ st.sidebar.markdown('<p class="sidebar-title">🌟 لبانور - لوحة ال�
 st.sidebar.markdown('<p class="version-tag">📌 الإصدار المحدث: v6:10pm 28-10-2026</p>', unsafe_allow_html=True)
 st.sidebar.info("👑 المدير" if IS_ADMIN else "👁️ وضع العرض فقط")
 
+# All action buttons are disabled for viewers; navigation remains available via selectbox.
+_original_button = st.button
+def _permission_button(*args, **kwargs):
+    if not IS_ADMIN:
+        kwargs["disabled"] = True
+    return _original_button(*args, **kwargs)
+st.button = _permission_button
+_original_form_submit = st.form_submit_button
+def _permission_form_submit(*args, **kwargs):
+    if not IS_ADMIN:
+        kwargs["disabled"] = True
+    return _original_form_submit(*args, **kwargs)
+st.form_submit_button = _permission_form_submit
+
+
 if st.sidebar.button("🔄 إعادة تحميل البيانات من ملف النظام"):
     st.cache_data.clear()
     st.rerun()
@@ -769,6 +862,7 @@ st.title("📦 نظام إدارة الطلبيات والمخزون والمص�
 st.markdown("---")
 
 def get_cargo_summary_df(orders_df):
+    """ملخص شركة الشحن على أساس قيمة المنتجات فقط؛ رسوم الشحن لا تدخل حسابات الشركة."""
     if orders_df.empty or 'Cargo_Company' not in orders_df.columns:
         return pd.DataFrame()
 
@@ -788,6 +882,7 @@ def get_cargo_summary_df(orders_df):
         products_sales = float(group['Products_Total'].sum())
         collected_products = float(group.loc[is_collected, 'Products_Total'].sum())
         uncollected_products = float(group.loc[~is_collected, 'Products_Total'].sum())
+        # رسوم الشحن معلومات تشغيلية تخص شركة الشحن، وليست إيراداً أو تحصيلاً للشركة.
         shipping_collected = float(group.loc[group['Shipping_Payment'].astype(str).eq('تم دفع الشحن'), 'Shipping_Price'].sum())
         shipping_pending = float(group.loc[~group['Shipping_Payment'].astype(str).eq('تم دفع الشحن'), 'Shipping_Price'].sum())
         summary_list.append({
@@ -812,6 +907,7 @@ if menu == "اللوحة الرئيسية":
     paid_mask = orders_df['Order_Payment'].astype(str).eq('تم الدفع') if not orders_df.empty else pd.Series(dtype=bool)
     collected_products_total = pd.to_numeric(orders_df.loc[paid_mask, 'Products_Total'], errors='coerce').fillna(0).sum() if not orders_df.empty else 0.0
     pending_products_total = pd.to_numeric(orders_df.loc[~paid_mask, 'Products_Total'], errors='coerce').fillna(0).sum() if not orders_df.empty else 0.0
+    # رسوم الشحن تُدفع مباشرة لشركة الشحن؛ لا تُضاف إلى إيرادات أو تحصيلات أو خزينة لبانور.
     total_collected_cash = collected_products_total
     actual_treasury = total_collected_cash - total_expenses
     shipping_paid = pd.to_numeric(orders_df.loc[orders_df['Shipping_Payment'].astype(str).eq('تم دفع الشحن'), 'Shipping_Price'], errors='coerce').fillna(0).sum() if not orders_df.empty else 0.0
@@ -912,6 +1008,7 @@ elif menu == "تسجيل طلب جديد":
                     items_summary_list = [f"{r['Item']} (الكمية: {r['Qty']})" for r in st.session_state.cart]
                     items_detail_str = " | ".join(items_summary_list)
                     grand_total = products_total + shipping_price
+                    # Product collection is independent from shipping fee payment.
                     coll_status = "مدفوع بالكامل" if order_payment == "تم الدفع" else "قيد التحصيل"
                 
                     new_row = {
@@ -995,6 +1092,7 @@ elif menu == "تتبع الشحنات والتحصيل":
         if status_filter != "الكل":
             filtered_df = filtered_df[filtered_df['Delivery_Status'] == status_filter]
         if collection_filter != "الكل":
+            # The collection state is based on product/invoice payment only.
             filtered_df = filtered_df[filtered_df['Order_Payment'].map(lambda v: 'مدفوع بالكامل' if str(v).strip() == 'تم الدفع' else 'قيد التحصيل') == collection_filter]
             
         filtered_df = filtered_df.copy()
@@ -1042,6 +1140,7 @@ elif menu == "تتبع الشحنات والتحصيل":
             
             selected_rows = event.selection.rows if hasattr(event, 'selection') else []
             
+            # تحديد الطلبية المختارة إما عن طريق النقر في الجدول أو القائمة المنسدلة
             st.markdown("---")
             st.subheader("✏️ قسم التعديل السريع لحالة الطلبية (التوصيل، الدفع، والشحن):")
             
@@ -1472,6 +1571,7 @@ elif menu == "تعديل وحذف الفواتير":
                 orders_df.loc[orders_df['Order_ID'] == edit_order_id, 'Order_Payment'] = e_ord_pay
                 orders_df.loc[orders_df['Order_ID'] == edit_order_id, 'Shipping_Payment'] = e_shp_pay
                 
+                # Collection of product value depends only on Order_Payment; shipping payment is separate.
                 new_coll_status = "مدفوع بالكامل" if e_ord_pay == "تم الدفع" else "قيد التحصيل"
                 orders_df.loc[orders_df['Order_ID'] == edit_order_id, 'Collection_Status'] = new_coll_status
 
@@ -1584,6 +1684,7 @@ elif menu == "التقرير المالي التفصيلي":
     shipping_paid = pd.to_numeric(orders_df.loc[orders_df['Shipping_Payment'].astype(str).eq('تم دفع الشحن'), 'Shipping_Price'], errors='coerce').fillna(0).sum() if not orders_df.empty else 0.0
     shipping_pending = total_shipping - shipping_paid
     total_expenses = pd.to_numeric(expenses_df['Amount'], errors='coerce').fillna(0).sum() if not expenses_df.empty else 0.0
+    # التحصيل المالي للشركة يخص المنتجات فقط؛ رسوم الشحن مستبعدة لأنها تذهب مباشرة للناقل.
     total_collected_cash = collected_products_total
     actual_treasury = total_collected_cash - total_expenses
 
@@ -1592,7 +1693,7 @@ elif menu == "التقرير المالي التفصيلي":
     m2.metric("المحصل من مبيعات المنتجات", f"{total_collected_cash:.3f} ر.ع")
     m3.metric("المبيعات غير المحصلة", f"{pending_products_total:.3f} ر.ع")
     m4.metric("💰 صافي التدفق النقدي (بدون الشحن)", f"{actual_treasury:.3f} ر.ع")
-    st.caption(f"رسوم الشحن خارج حسابات لبانور وتُدفع مباشرة لشركات الشحن — مدفوع لشركات الشحن: {shipping_paid:.3f} ر.ع | متبقٍ لشركات الشحن: {shipping_pending:.3f} ر.ع | إجمالي رسوم الشحن: {total_shipping:.3f} ر.ع.")
+    st.caption(f"رسوم الشحن خارج حسابات لبانور وتُدفع مباشرة لشركات الشحن — مدفوع لشركات الشحن: {shipping_paid:.3f} ر.ع | متبقٍ لشركات الشحن: {shipping_pending:.3f} ر.ع | إجمالي رسوم الشحن: {total_shipping:.3f} ر.ع. لا تدخل هذه المبالغ في المبيعات أو التحصيل أو صافي التدفق النقدي.")
     
     st.markdown("---")
     cargo_summary = get_cargo_summary_df(orders_df)
@@ -1606,7 +1707,7 @@ elif menu == "سجل حركة المستخدم والاتصال":
     else:
         audit_df = read_activity_log(DB_FILE)
         if audit_df.empty:
-            st.info("لا توجد حركات مسجلة بعد.")
+            st.info("لا توجد حركات مسجلة بعد. سيبدأ النظام تسجيل العمليات المهمة والمزامنة من الآن.")
         else:
             if "Timestamp" in audit_df.columns:
                 audit_df["Timestamp"] = pd.to_datetime(audit_df["Timestamp"], errors="coerce")
@@ -1620,6 +1721,7 @@ elif menu == "سجل حركة المستخدم والاتصال":
             st.metric("عدد الأحداث المسجلة", len(audit_df))
             st.dataframe(audit_df.sort_values("Timestamp", ascending=False) if "Timestamp" in audit_df.columns else audit_df, use_container_width=True, hide_index=True)
             st.download_button("📥 تحميل سجل الحركة CSV", audit_df.to_csv(index=False).encode("utf-8-sig"), file_name="LubaNur_Activity_Log.csv", mime="text/csv")
+        st.caption("يسجل النظام عمليات الدخول والخروج، وحفظ المعاملات، ومحاولات مزامنة GitHub ونتائجها. انقطاع اتصال المتصفح نفسه لا يمكن رصده لحظياً من الخادم؛ يسجل النظام فشل الاتصال عند محاولة المزامنة أو الحفظ.")
 
 elif menu == "الربحية والأرباح":
     st.header("💹 قسم الربحية والأرباح")
@@ -1660,8 +1762,9 @@ elif menu == "الربحية والأرباح":
     if not detail_df.empty:
         st.dataframe(detail_df, use_container_width=True, hide_index=True)
     if not missing_costs.empty:
-        st.warning("هناك منتجات مباعة لم تُدخل تكلفة وحدتها بعد.")
+        st.warning("هناك منتجات مباعة لم تُدخل تكلفة وحدتها بعد. لذلك صافي الربح الحالي غير نهائي، والتكلفة المحتسبة لهذه المنتجات تساوي صفراً حتى إدخالها.")
         st.dataframe(missing_costs[["المنتج", "الكمية المباعة"]], use_container_width=True, hide_index=True)
+    st.caption("طريقة الحساب: مجمل الربح = مبيعات المنتجات − تكلفة الوحدات المباعة. صافي الربح = مجمل الربح − جميع المصروفات المسجلة. رسوم الشحن مستبعدة لأنها تخص شركة الشحن. التكاليف التي تدخلها الآن تُطبق على الكميات المباعة في الطلبات التاريخية أيضاً؛ إذا تغيرت تكلفة الشراء بمرور الوقت فستحتاج لاحقاً إلى سجل تكلفة بتاريخ سريان.")
 
 elif menu == "طلب توريد المخزون الحرِج":
     st.header("🚨 طلب توريد المخزون الحرِج")
