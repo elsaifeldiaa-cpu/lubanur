@@ -25,6 +25,7 @@ def get_secret(name, default=""):
 
 ADMIN_PASSWORD = get_secret("ADMIN_PASSWORD", get_secret("APP_PASSWORD", ""))
 VIEWER_PASSWORD = get_secret("VIEWER_PASSWORD", "")
+
 if not ADMIN_PASSWORD or not VIEWER_PASSWORD:
     st.error("يرجى إعداد ADMIN_PASSWORD و VIEWER_PASSWORD في Streamlit Secrets.")
     st.code('ADMIN_PASSWORD = "كلمة_مرور_المدير"\nVIEWER_PASSWORD = "كلمة_مرور_المشاهد"\nGITHUB_TOKEN = "توكن_خاص"\nGITHUB_REPO = "elsaifeldiaa-cpu/lubanur"\nGITHUB_BRANCH = "main"\nGITHUB_EXCEL_PATH = "system_database.xlsx"', language="toml")
@@ -32,11 +33,16 @@ if not ADMIN_PASSWORD or not VIEWER_PASSWORD:
 
 if "user_role" not in st.session_state:
     st.session_state.user_role = None
+
 if st.session_state.user_role is None:
     st.markdown("<h2 style='text-align:center'>🔐 تسجيل الدخول لنظام لبانور</h2>", unsafe_allow_html=True)
-    pwd = st.text_input("كلمة المرور", type="password", key="login_pass")
-    if st.button("دخول", use_container_width=True):
-        if pwd == ADMIN_PASSWORD:
+    with st.form("lubanur_login_form", clear_on_submit=False):
+        pwd = st.text_input("كلمة المرور", type="password", key="login_pass")
+        login_submitted = st.form_submit_button("دخول", use_container_width=True)
+    if login_submitted:
+        if not pwd:
+            st.warning("يرجى إدخال كلمة المرور أولاً.")
+        elif pwd == ADMIN_PASSWORD:
             st.session_state.user_role = "admin"
             st.session_state.authenticated = True
             st.session_state.login_event_pending = "تسجيل دخول المدير"
@@ -53,22 +59,19 @@ if st.session_state.user_role is None:
 
 IS_ADMIN = st.session_state.user_role == "admin"
 
-# حماية أزرار التعديل: لا يتم تفعيل هذا القيد إلا بعد اجتياز شاشة الدخول.
-# شاشة تسجيل الدخول تقع قبل هذا الموضع وتنتهي بـ st.stop()، لذلك لا يمكن تعطيل زر دخول.
-# المستخدم المشاهد يستطيع التنقل والقراءة، بينما تُعطّل له أزرار تنفيذ العمليات.
+# تطبيق تعطيل أزرار التعديل والحفظ فقط عند دخول مستخدم العرض (Viewer)
 _original_button = st.button
 def _permission_button(*args, **kwargs):
-    if st.session_state.get("user_role") == "viewer":
+    if st.session_state.user_role == "viewer":
         kwargs["disabled"] = True
     return _original_button(*args, **kwargs)
+st.button = _permission_button
 
 _original_form_submit = st.form_submit_button
 def _permission_form_submit(*args, **kwargs):
-    if st.session_state.get("user_role") == "viewer":
+    if st.session_state.user_role == "viewer":
         kwargs["disabled"] = True
     return _original_form_submit(*args, **kwargs)
-
-st.button = _permission_button
 st.form_submit_button = _permission_form_submit
 
 # === تخصيص CSS لمظهر عصري وواضح (Elite UI) ===
@@ -145,7 +148,6 @@ def github_download_workbook():
         os.replace(tmp, DB_FILE)
         return True
     except Exception as exc:
-        # Do not silently replace a valid local workbook with an empty one.
         if os.path.exists(DB_FILE) and os.path.getsize(DB_FILE) > 0:
             st.warning(f"تعذر جلب أحدث Excel من GitHub؛ سيتم فتح النسخة المحلية: {exc}")
             return False
@@ -206,7 +208,6 @@ if "session_id" not in st.session_state:
 
 
 def append_activity_log(path, action, details="", connection_status="غير محدد"):
-    """Append a durable audit row to the workbook without changing business sheets."""
     try:
         if os.path.exists(path) and os.path.getsize(path) > 0:
             wb = load_workbook(path)
@@ -228,7 +229,6 @@ def append_activity_log(path, action, details="", connection_status="غير مح
         wb.save(path)
         wb.close()
     except Exception as exc:
-        # Audit failures must be visible; do not hide them behind a successful business save.
         st.warning(f"تعذر تسجيل حدث في سجل الحركة: {exc}")
 
 
@@ -293,7 +293,6 @@ def normalize_orders_df(orders):
                     orders[col] = orders[col].astype(int)
                     
     orders['Total'] = orders['Products_Total'] + orders['Shipping_Price']
-    # Product collection is determined ONLY by invoice/product payment, never shipping payment.
     orders['Collection_Status'] = orders['Order_Payment'].astype(str).map(
         lambda value: 'مدفوع بالكامل' if value.strip() == 'تم الدفع' else 'قيد التحصيل'
     )
@@ -329,9 +328,6 @@ def item_quantities(items):
     return quantities
 
 def adjust_stock_for_order(stock_df, old_items, new_items):
-    """Apply only the quantity delta between old and new invoice items.
-    Returns (updated_stock, error_message); no changes are applied on insufficient stock.
-    """
     updated = stock_df.copy(deep=True)
     old_q = item_quantities(old_items)
     new_q = item_quantities(new_items)
@@ -345,14 +341,12 @@ def adjust_stock_for_order(stock_df, old_items, new_items):
         qty_value = pd.to_numeric(updated.loc[idx, "Qty"], errors="coerce")
         current_qty = int(qty_value) if pd.notna(qty_value) else 0
         delta = old_q.get(name, 0) - new_q.get(name, 0)
-        # delta > 0 means items were removed from the invoice and stock must be returned.
         if delta < 0 and current_qty < -delta:
             return stock_df, f"الكمية المتاحة من «{name}» غير كافية. المتاح: {current_qty}، المطلوب إضافته للفاتورة: {-delta}."
         updated.loc[idx, "Qty"] = current_qty + delta
     return updated, None
 
 def _read_workbook_safely(path):
-    """Read and validate the required workbook sheets without modifying the source file."""
     if not os.path.exists(path) or os.path.getsize(path) == 0:
         raise RuntimeError(f"ملف قاعدة البيانات غير موجود أو فارغ: {path}")
     xls = pd.ExcelFile(path, engine="openpyxl")
@@ -372,7 +366,6 @@ def _read_workbook_safely(path):
 
 
 def save_all_data(orders_df, stock_df, expenses_df, cargo_companies_list, product_costs_df=None):
-    """Save locally, back up, then synchronize the committed workbook to GitHub."""
     if not IS_ADMIN:
         raise PermissionError("حساب العرض فقط؛ لا يملك صلاحية تعديل البيانات.")
     db_dir = os.path.dirname(os.path.abspath(DB_FILE))
@@ -382,7 +375,6 @@ def save_all_data(orders_df, stock_df, expenses_df, cargo_companies_list, produc
     if product_costs_df is None:
         product_costs_df = load_product_costs(DB_FILE)
 
-    # Never overwrite an unreadable source workbook. A bad read must be investigated first.
     if os.path.exists(DB_FILE) and os.path.getsize(DB_FILE) > 0:
         try:
             old_orders, _, _, _ = _read_workbook_safely(DB_FILE)
@@ -390,7 +382,6 @@ def save_all_data(orders_df, stock_df, expenses_df, cargo_companies_list, produc
             raise RuntimeError(f"تم إيقاف الحفظ لحماية البيانات؛ تعذرت قراءة قاعدة البيانات الحالية: {exc}") from exc
         old_count = len(old_orders)
         new_count = len(orders_df)
-        # Individual invoice deletion is supported; a sudden drop by more than one invoice is blocked.
         if old_count - new_count > 1:
             raise RuntimeError(
                 f"تم إيقاف الحفظ لحماية الفواتير: عدد الفواتير الحالية {old_count} والجديدة {new_count}. "
@@ -422,7 +413,6 @@ def save_all_data(orders_df, stock_df, expenses_df, cargo_companies_list, produc
                 "Connection_Status": "جارٍ مزامنة GitHub"
             }])
             pd.concat([existing_log, new_log], ignore_index=True).to_excel(writer, sheet_name=AUDIT_SHEET, index=False)
-        # Verify the temporary workbook before replacing the active database.
         _read_workbook_safely(temp_path)
         os.replace(temp_path, DB_FILE)
         try:
@@ -438,16 +428,13 @@ def save_all_data(orders_df, stock_df, expenses_df, cargo_companies_list, produc
 
 
 def init_db():
-    """Initialize only a genuinely new database; never replace an existing broken database."""
     marker_file = ".system_database_initialized"
     if os.path.exists(DB_FILE) and os.path.getsize(DB_FILE) > 0:
-        # Validate existing data; any error stops startup without overwriting the source.
         _read_workbook_safely(DB_FILE)
         with open(marker_file, "w", encoding="utf-8") as marker:
             marker.write("initialized\n")
         return
 
-    # If the database existed previously, its disappearance must not trigger an empty replacement.
     if os.path.exists(marker_file):
         raise RuntimeError(
             "ملف system_database.xlsx مفقود أو فارغ رغم أن النظام سبق تهيئته. "
@@ -496,7 +483,6 @@ except Exception as db_init_error:
 
 
 def load_product_costs(path=DB_FILE):
-    """Read private product unit costs from their dedicated workbook sheet."""
     try:
         xls = pd.ExcelFile(path, engine="openpyxl")
         if "Product_Costs" in xls.sheet_names:
@@ -659,8 +645,6 @@ st.sidebar.markdown('<p class="sidebar-title">🌟 لبانور - لوحة ال�
 st.sidebar.markdown('<p class="version-tag">📌 الإصدار المحدث: v6:10pm 28-10-2026</p>', unsafe_allow_html=True)
 st.sidebar.info("👑 المدير" if IS_ADMIN else "👁️ وضع العرض فقط")
 
-
-
 if st.sidebar.button("🔄 إعادة تحميل البيانات من ملف النظام"):
     st.cache_data.clear()
     st.rerun()
@@ -741,7 +725,6 @@ st.title("📦 نظام إدارة الطلبيات والمخزون والمص�
 st.markdown("---")
 
 def get_cargo_summary_df(orders_df):
-    """ملخص شركة الشحن على أساس قيمة المنتجات فقط؛ رسوم الشحن لا تدخل حسابات الشركة."""
     if orders_df.empty or 'Cargo_Company' not in orders_df.columns:
         return pd.DataFrame()
 
@@ -761,7 +744,6 @@ def get_cargo_summary_df(orders_df):
         products_sales = float(group['Products_Total'].sum())
         collected_products = float(group.loc[is_collected, 'Products_Total'].sum())
         uncollected_products = float(group.loc[~is_collected, 'Products_Total'].sum())
-        # رسوم الشحن معلومات تشغيلية تخص شركة الشحن، وليست إيراداً أو تحصيلاً للشركة.
         shipping_collected = float(group.loc[group['Shipping_Payment'].astype(str).eq('تم دفع الشحن'), 'Shipping_Price'].sum())
         shipping_pending = float(group.loc[~group['Shipping_Payment'].astype(str).eq('تم دفع الشحن'), 'Shipping_Price'].sum())
         summary_list.append({
@@ -786,7 +768,6 @@ if menu == "اللوحة الرئيسية":
     paid_mask = orders_df['Order_Payment'].astype(str).eq('تم الدفع') if not orders_df.empty else pd.Series(dtype=bool)
     collected_products_total = pd.to_numeric(orders_df.loc[paid_mask, 'Products_Total'], errors='coerce').fillna(0).sum() if not orders_df.empty else 0.0
     pending_products_total = pd.to_numeric(orders_df.loc[~paid_mask, 'Products_Total'], errors='coerce').fillna(0).sum() if not orders_df.empty else 0.0
-    # رسوم الشحن تُدفع مباشرة لشركة الشحن؛ لا تُضاف إلى إيرادات أو تحصيلات أو خزينة لبانور.
     total_collected_cash = collected_products_total
     actual_treasury = total_collected_cash - total_expenses
     shipping_paid = pd.to_numeric(orders_df.loc[orders_df['Shipping_Payment'].astype(str).eq('تم دفع الشحن'), 'Shipping_Price'], errors='coerce').fillna(0).sum() if not orders_df.empty else 0.0
@@ -887,7 +868,6 @@ elif menu == "تسجيل طلب جديد":
                     items_summary_list = [f"{r['Item']} (الكمية: {r['Qty']})" for r in st.session_state.cart]
                     items_detail_str = " | ".join(items_summary_list)
                     grand_total = products_total + shipping_price
-                    # Product collection is independent from shipping fee payment.
                     coll_status = "مدفوع بالكامل" if order_payment == "تم الدفع" else "قيد التحصيل"
                 
                     new_row = {
@@ -971,7 +951,6 @@ elif menu == "تتبع الشحنات والتحصيل":
         if status_filter != "الكل":
             filtered_df = filtered_df[filtered_df['Delivery_Status'] == status_filter]
         if collection_filter != "الكل":
-            # The collection state is based on product/invoice payment only.
             filtered_df = filtered_df[filtered_df['Order_Payment'].map(lambda v: 'مدفوع بالكامل' if str(v).strip() == 'تم الدفع' else 'قيد التحصيل') == collection_filter]
             
         filtered_df = filtered_df.copy()
@@ -1019,7 +998,6 @@ elif menu == "تتبع الشحنات والتحصيل":
             
             selected_rows = event.selection.rows if hasattr(event, 'selection') else []
             
-            # تحديد الطلبية المختارة إما عن طريق النقر في الجدول أو القائمة المنسدلة
             st.markdown("---")
             st.subheader("✏️ قسم التعديل السريع لحالة الطلبية (التوصيل، الدفع، والشحن):")
             
@@ -1116,540 +1094,4 @@ elif menu == "ورقة تجهيز الطلبيات":
                         st.markdown(f"📍 **المنطقة:** {region}")
                     with col_info_d2:
                         st.markdown(f"📅 **تاريخ الطلب:** <span style='direction: ltr; display: inline-block;'>{order_date_str}</span>", unsafe_allow_html=True)
-                        st.markdown(f"🚚 **مكان التسليم (نوع التسليم):** {delivery_type}")
-                        st.markdown(f"💰 **المبلغ الإجمالي:** {total_amount} ر.ع (المنتجات: {order['Products_Total']} + الشحن: {order['Shipping_Price']})")
-                    
-                    st.markdown(f"🏷️ **عدد الأكياس:** {order['Bags']} &nbsp;|&nbsp; 📦 **شركة الشحن:** {order['Cargo_Company']}")
-                    
-                    st.markdown("---")
-                    st.markdown("🔍 **إدخال أو مسح باركود شركة الشحن:**")
-                    with st.form(key=f"barcode_form_{order_id}"):
-                        new_bc_input = st.text_input("باركود الشحن (Barcode)", value=current_barcode, key=f"bc_field_{order_id}")
-                        if st.form_submit_button("💾 حفظ الباركود"):
-                            ord_idx_target = orders_df[orders_df['Order_ID'] == order_id].index[0]
-                            orders_df.loc[ord_idx_target, 'Cargo_Barcode'] = new_bc_input
-                            
-                            cargo_df_save = pd.DataFrame({"Cargo_Name": cargo_companies_list})
-                            save_all_data(orders_df, stock_df, expenses_df, cargo_companies_list)
-                            st.cache_data.clear()
-                            st.success(f"✅ تم حفظ الباركود للطلب #{order_id} بنجاح!")
-                            st.rerun()
-
-                    st.markdown("---")
-                    st.write("✅ **أصناف الطلبية (ضع علامة صح عند تجهيز كل صنف):**")
-                    
-                    parsed_items = parse_items_to_list(order['Items_Detail'])
-                    
-                    packed_all = True
-                    for i, item_dict in enumerate(parsed_items):
-                        iname = item_dict['Item']
-                        iqty = item_dict['Qty']
-                        
-                        col_chk1, col_chk2 = st.columns([4, 1])
-                        with col_chk1:
-                            is_checked = st.checkbox(f"{iname} - الكمية المطلوبة: {iqty}", value=False, key=f"pack_{order_id}_{i}")
-                        with col_chk2:
-                            if is_checked:
-                                st.markdown("✅ **تم تجهيزه**")
-                            else:
-                                packed_all = False
-                                st.markdown("⏳ **قيد التجهيز**")
-                    
-                    st.markdown("---")
-                    if packed_all:
-                        st.success("🎉 تم تجهيز كافة الأصناف بالكامل!")
-                        if st.button(f"🚀 اعتماد تجهيز الطلب #{order_id} وتحويله لـ (جاهز للتسليم)", key=f"btn_ready_{order_id}"):
-                            idx_ord = orders_df[orders_df['Order_ID'] == order_id].index[0]
-                            orders_df.loc[idx_ord, 'Delivery_Status'] = "جاهز للتسليم"
-                            
-                            cargo_df_save = pd.DataFrame({"Cargo_Name": cargo_companies_list})
-                            save_all_data(orders_df, stock_df, expenses_df, cargo_companies_list)
-                            
-                            st.cache_data.clear()
-                            st.success(f"✅ تم تحويل الطلب #{order_id} إلى (جاهز للتسليم) وإخفاؤه من الشاشة!")
-                            st.rerun()
-                    else:
-                        st.info("💡 يرجى وضع علامة صح على كافة الأصناف للتحويل الفوري للطلب.")
-        else:
-            st.success("🎉 تم تجهيز كافة طلبات هذا اليوم بنجاح أو لا توجد طلبات معلقة!")
-    else:
-        st.info("لا توجد طلبيات مسجلة في النظام بعد.")
-
-elif menu == "إدارة المخزون والجرد":
-    st.header("📦 إدارة المخزون، تعزيز الأصناف وتسوية الجرد")
-    orders_df, stock_df, expenses_df, cargo_companies_list = load_data()
-    
-    st.subheader("📋 تقرير الأصناف والرصيد الحالي:")
-    if not stock_df.empty:
-        stock_display = stock_df.copy()
-        stock_display['الحالة'] = stock_display['Qty'].apply(lambda x: "🚨 حرِج (أقل من 5)" if x < 5 else "✅ متوفر")
-        st.dataframe(stock_display, use_container_width=True)
-    
-    st.markdown("---")
-    tab1, tab2 = st.tabs(["➕ تعزيز / سحب كميات المنتجات", "📊 تسوية المخزون بعد الجرد (العجز والزيادة)"])
-    
-    with tab1:
-        st.subheader("تعزيز أو سحب أصناف يدوياً")
-        with st.form("restock_form"):
-            r_item = st.selectbox("اختر المنتج", stock_df['Item_Name'].tolist(), key="rst_item")
-            r_action = st.selectbox("نوع العملية", ["إضافة إلى المخزون (تعزيز)", "سحب من المخزون"])
-            r_qty = st.number_input("الكمية", min_value=1, value=1)
-            
-            if st.form_submit_button("💾 تنفيذ وتحديث المخزون"):
-                idx_st = stock_df[stock_df['Item_Name'] == r_item].index[0]
-                cur_q = int(stock_df.loc[idx_st, 'Qty'])
-                if r_action == "إضافة إلى المخزون (تعزيز)":
-                    stock_df.loc[idx_st, 'Qty'] = cur_q + r_qty
-                else:
-                    stock_df.loc[idx_st, 'Qty'] = max(0, cur_q - r_qty)
-                
-                cargo_df_save = pd.DataFrame({"Cargo_Name": cargo_companies_list})
-                save_all_data(orders_df, stock_df, expenses_df, cargo_companies_list)
-                
-                st.cache_data.clear()
-                st.success(f"✅ تم تحديث مخزون المنتج ({r_item}) بنجاح!")
-                st.rerun()
-                
-    with tab2:
-        st.subheader("تسوية المخزون بعد الجرد الفعلي")
-        if not stock_df.empty:
-            audit_df = stock_df.copy()
-            audit_df['الكمية الفعلية بالجرد'] = audit_df['Qty']
-            
-            edited_audit = st.data_editor(audit_df[['Item_Name', 'Qty', 'الكمية الفعلية بالجرد']], use_container_width=True, key="audit_editor")
-            
-            if st.button("⚖️ اعتماد تسوية الجرد وتحديث الأرصدة"):
-                for idx, row in edited_audit.iterrows():
-                    it_name = row['Item_Name']
-                    actual_q = int(row['الكمية الفعلية بالجرد'])
-                    stock_df.loc[stock_df['Item_Name'] == it_name, 'Qty'] = actual_q
-                
-                cargo_df_save = pd.DataFrame({"Cargo_Name": cargo_companies_list})
-                save_all_data(orders_df, stock_df, expenses_df, cargo_companies_list)
-                
-                st.cache_data.clear()
-                st.success("🎉 تمت تسوية المخزون واعتماد الجرد بنجاح!")
-                st.rerun()
-
-elif menu == "إدارة شركات الشحن":
-    st.header("🚚 إدارة وإضافة شركات الشحن")
-    orders_df, stock_df, expenses_df, cargo_companies_list = load_data()
-    
-    st.subheader("الشركات الحالية في النظام:")
-    st.write(cargo_companies_list)
-    
-    with st.form("add_cargo_form"):
-        new_cargo_name = st.text_input("اسم شركة الشحن الجديدة")
-        if st.form_submit_button("➕ إضافة شركة الشحن"):
-            if new_cargo_name and new_cargo_name not in cargo_companies_list:
-                cargo_companies_list.append(new_cargo_name.strip())
-                
-                if "وصل لي" in cargo_companies_list:
-                    cargo_companies_list.remove("وصل لي")
-                    cargo_companies_list.insert(0, "وصل لي")
-                
-                cargo_df_save = pd.DataFrame({"Cargo_Name": cargo_companies_list})
-                save_all_data(orders_df, stock_df, expenses_df, cargo_companies_list)
-                
-                st.cache_data.clear()
-                st.success(f"✅ تمت إضافة شركة الشحن '{new_cargo_name}' بنجاح!")
-                st.rerun()
-            else:
-                st.error("الاسم فارغ أو موجود مسبقاً.")
-
-elif menu == "تقرير الشحن":
-    st.header("📑 تقرير تسليم الشحنات لشركات الشحن")
-    orders_df, _, _, cargo_companies_list = load_data()
-    
-    if not orders_df.empty:
-        col_rep_c1, col_rep_c2, col_rep_c3 = st.columns(3)
-        with col_rep_c1:
-            selected_cargo = st.selectbox("اختر شركة الشحن", cargo_companies_list, key="rep_cargo_sel")
-        with col_rep_c2:
-            use_date_filter = st.checkbox("تصفية حسب التاريخ المحدد (اختياري)", value=False)
-        with col_rep_c3:
-            if use_date_filter:
-                report_date = st.date_input("اختر التاريخ", datetime.date.today(), key="rep_date_sel")
-            else:
-                report_date = None
-
-        filtered_cargo_df = orders_df[orders_df['Cargo_Company'] == selected_cargo].copy()
-        
-        if use_date_filter and report_date:
-            filtered_cargo_df['Date_Parsed'] = pd.to_datetime(filtered_cargo_df['Date'], errors='coerce').dt.date
-            filtered_cargo_df = filtered_cargo_df[filtered_cargo_df['Date_Parsed'] == report_date]
-
-        if not filtered_cargo_df.empty:
-            report_display_df = pd.DataFrame({
-                "رقم الفاتورة": filtered_cargo_df['Order_ID'],
-                "التاريخ": filtered_cargo_df['Date'],
-                "اسم العميل": filtered_cargo_df['Customer'],
-                "رقم الهاتف": filtered_cargo_df['Phone'],
-                "مكان التوصيل (المنطقة)": filtered_cargo_df['Region'],
-                "عدد الأكياس": filtered_cargo_df['Bags'],
-                "قيمة مبيعات المنتجات (ر.ع)": filtered_cargo_df['Products_Total'],
-                "حالة تحصيل المنتجات": filtered_cargo_df['Order_Payment'],
-                "المحصل من المنتجات (ر.ع)": filtered_cargo_df.apply(lambda r: r['Products_Total'] if str(r['Order_Payment']) == 'تم الدفع' else 0, axis=1),
-                "المتبقي من المنتجات (ر.ع)": filtered_cargo_df.apply(lambda r: 0 if str(r['Order_Payment']) == 'تم الدفع' else r['Products_Total'], axis=1),
-                "رسوم الشحن (للشركة مباشرة)": filtered_cargo_df['Shipping_Price'],
-                "حالة دفع الشحن": filtered_cargo_df['Shipping_Payment'],
-                "باركود الشحن": filtered_cargo_df['Cargo_Barcode'],
-            })
-
-            st.markdown(f"### 📋 بيان شحنات شركة: **{selected_cargo}** (إجمالي الشحنات: {len(report_display_df)})")
-            st.dataframe(report_display_df, use_container_width=True)
-            products_sales = pd.to_numeric(filtered_cargo_df['Products_Total'], errors='coerce').fillna(0).sum()
-            products_collected = pd.to_numeric(filtered_cargo_df.loc[filtered_cargo_df['Order_Payment'].astype(str).eq('تم الدفع'), 'Products_Total'], errors='coerce').fillna(0).sum()
-            products_pending = products_sales - products_collected
-            st.markdown("#### ملخص حساب المنتجات لدى شركة الشحن")
-            k1, k2, k3 = st.columns(3)
-            k1.metric("مبيعات المنتجات", f"{products_sales:.3f} ر.ع")
-            k2.metric("المحصل", f"{products_collected:.3f} ر.ع")
-            k3.metric("المبيعات غير المحصلة / المتبقي", f"{products_pending:.3f} ر.ع")
-            st.caption("رسوم الشحن معروضة للمراجعة التشغيلية فقط؛ فهي تخص شركة الشحن ولا تدخل في حسابات لبانور.")
-        else:
-            st.warning("لا توجد شحنات مطابقة لخيارات البحث المحددة.")
-    else:
-        st.info("لا توجد طلبيات مسجلة في النظام بعد.")
-
-elif menu == "تقرير الطلبات للفترة مع الأصناف":
-    st.header("📅 تقرير الطلبات للفترة مع الأصناف")
-    orders_df, _, _, _ = load_data()
-    if not orders_df.empty:
-        col_dt1, col_dt2 = st.columns(2)
-        with col_dt1:
-            start_date = st.date_input("من تاريخ", datetime.date.today() - datetime.timedelta(days=30), key="rep_start_date")
-        with col_dt2:
-            end_date = st.date_input("إلى تاريخ", datetime.date.today(), key="rep_end_date")
-            
-        filtered_period_df = orders_df.copy()
-        filtered_period_df['Date_Parsed'] = pd.to_datetime(filtered_period_df['Date'], errors='coerce').dt.date
-        
-        mask = (filtered_period_df['Date_Parsed'] >= start_date) & (filtered_period_df['Date_Parsed'] <= end_date)
-        period_result = filtered_period_df[mask]
-        
-        st.info(f"عدد الطلبات في الفترة المحددة: {len(period_result)}")
-        st.dataframe(period_result[['Order_ID', 'Date', 'Customer', 'Phone', 'Region', 'Cargo_Company', 'Items_Detail', 'Products_Total', 'Shipping_Price', 'Total']], use_container_width=True)
-    else:
-        st.info("لا توجد طلبيات مسجلة في النظام بعد.")
-
-elif menu == "التعديل الجماعي الشامل":
-    st.header("📊 التعديل الجماعي الفوري للطلبات (شيت إكسيل تفاعلي)")
-    orders_df, stock_df, expenses_df, cargo_companies_list = load_data()
-    if not orders_df.empty:
-        edited_orders_df = st.data_editor(orders_df, num_rows="dynamic", use_container_width=True, key="batch_order_editor")
-        if st.button("💾 حفظ جميع التعديلات دفعة واحدة"):
-            try:
-                original_items = orders_df.set_index("Order_ID")["Items_Detail"].astype(str).to_dict()
-                edited_items = edited_orders_df.set_index("Order_ID")["Items_Detail"].astype(str).to_dict()
-                changed_item_orders = [oid for oid, value in edited_items.items() if oid in original_items and value != original_items[oid]]
-                if changed_item_orders:
-                    st.error("لم يتم الحفظ: تعديل أصناف الفاتورة من الجدول الجماعي قد يسبب اختلاف المخزون. استخدم قسم «تعديل وحذف الفواتير» لتعديل الأصناف مع تحديث المخزون تلقائيًا.")
-                    st.stop()
-                edited_orders_df['Total'] = pd.to_numeric(edited_orders_df['Products_Total'], errors='coerce').fillna(0) + pd.to_numeric(edited_orders_df['Shipping_Price'], errors='coerce').fillna(0)
-                save_all_data(edited_orders_df, stock_df, expenses_df, cargo_companies_list)
-                st.success("🎉 تم حفظ جميع التعديلات وتحديث قاعدة البيانات بنجاح!")
-                st.rerun()
-            except Exception as e:
-                st.error(f"❌ حدث خطأ: {e}")
-    else:
-        st.info("لا توجد طلبيات.")
-
-elif menu == "فاتورة العميل":
-    st.header("🖨️ فاتورة العميل (معاينة وطباعة ونسخ وتصدير)")
-    orders_df, _, _, _ = load_data()
-    
-    if not orders_df.empty:
-        st.markdown("🔍 **خيارات البحث المرنة للوصول للفاتورة:**")
-        
-        col_s1, col_s2, col_s3 = st.columns(3)
-        with col_s1:
-            search_invoice_id = st.number_input("البحث برقم الفاتورة (Order ID):", min_value=0, value=0)
-        with col_s2:
-            search_phone_cust = st.text_input("البحث برقم الهاتف أو اسم العميل:")
-        with col_s3:
-            search_barcode = st.text_input("البحث بباركود الشحن:")
-            
-        use_inv_date = st.checkbox("📅 تصفية حسب التاريخ (اختياري)", value=False)
-        
-        filtered_inv_df = orders_df.copy()
-        
-        if use_inv_date:
-            receipt_filter_date = st.date_input("اختر التاريخ", datetime.date.today(), key="rec_filter_date")
-            filtered_inv_df['Date_Parsed'] = pd.to_datetime(filtered_inv_df['Date'], errors='coerce').dt.date
-            filtered_inv_df = filtered_inv_df[filtered_inv_df['Date_Parsed'] == receipt_filter_date]
-            
-        if search_invoice_id > 0:
-            filtered_inv_df = filtered_inv_df[filtered_inv_df['Order_ID'] == int(search_invoice_id)]
-        if search_phone_cust:
-            q_str = search_phone_cust.strip().lower()
-            filtered_inv_df = filtered_inv_df[
-                filtered_inv_df['Phone'].astype(str).str.lower().str.contains(q_str) | 
-                filtered_inv_df['Customer'].astype(str).str.lower().str.contains(q_str)
-            ]
-        if search_barcode:
-            filtered_inv_df = filtered_inv_df[filtered_inv_df['Cargo_Barcode'].astype(str).str.contains(search_barcode.strip(), na=False)]
-
-        if not filtered_inv_df.empty:
-            order_options = filtered_inv_df['Order_ID'].tolist()
-            selected_order_id = st.selectbox("اختر الفاتورة المطلوبة من النتائج:", order_options, format_func=lambda x: f"فاتورة #{x} - العميل: {filtered_inv_df.loc[filtered_inv_df['Order_ID']==x, 'Customer'].values[0]} (هاتف: {filtered_inv_df.loc[filtered_inv_df['Order_ID']==x, 'Phone'].values[0]})")
-            
-            order_row = orders_df[orders_df['Order_ID'] == selected_order_id].iloc[0]
-            st.components.v1.html(render_invoice_snippet(order_row), height=740)
-        else:
-            st.warning("لا توجد فواتير مطابقة لمعايير البحث المحددة.")
-    else:
-        st.info("لا توجد فواتير مسجلة في النظام بعد.")
-
-elif menu == "تعديل وحذف الفواتير":
-    st.header("✏️ تعديل وحذف الفواتير مع إدارة الأصناف بسهولة")
-    orders_df, stock_df, expenses_df, cargo_companies_list = load_data()
-    
-    if not orders_df.empty:
-        edit_order_id = st.selectbox("اختر رقم الطلب للتعديل", orders_df['Order_ID'].tolist())
-        target_row = orders_df[orders_df['Order_ID'] == edit_order_id].iloc[0]
-        
-        st.info(f"📌 **تعديل الفاتورة رقم #{edit_order_id} للعميل: {target_row['Customer']}**")
-        
-        with st.form("edit_form"):
-            e_cust = st.text_input("اسم العميل", value=str(target_row['Customer']))
-            e_phone = st.text_input("الهاتف", value=str(target_row['Phone']))
-            e_region = st.text_input("المنطقة / الولاية", value=str(target_row.get('Region', '')))
-            
-            cur_cargo = str(target_row.get('Cargo_Company', cargo_companies_list[0]))
-            cargo_idx = cargo_companies_list.index(cur_cargo) if cur_cargo in cargo_companies_list else 0
-            e_cargo = st.selectbox("شركة الشحن", cargo_companies_list, index=cargo_idx)
-            
-            e_bags = st.number_input("عدد الأكياس", min_value=0, value=int(target_row.get('Bags', 1)))
-            e_prod_tot = st.number_input("قيمة المنتجات (OMR)", value=float(target_row['Products_Total']))
-            e_ship_p = st.number_input("سعر الشحن (OMR)", value=float(target_row['Shipping_Price']))
-            e_barcode = st.text_input("باركود شركة الشحن", value=str(target_row.get('Cargo_Barcode', '')))
-            
-            cur_ord_pay = str(target_row.get('Order_Payment', 'لم يتم الدفع'))
-            cur_shp_pay = str(target_row.get('Shipping_Payment', 'لم يتم دفع الشحن'))
-            
-            ord_pay_list = ["لم يتم الدفع", "تم الدفع"]
-            o_idx = ord_pay_list.index(cur_ord_pay) if cur_ord_pay in ord_pay_list else 0
-            e_ord_pay = st.selectbox("حالة دفع الطلب", ord_pay_list, index=o_idx)
-            
-            shp_pay_list = ["لم يتم دفع الشحن", "تم دفع الشحن"]
-            s_idx = shp_pay_list.index(cur_shp_pay) if cur_shp_pay in shp_pay_list else 0
-            e_shp_pay = st.selectbox("حالة دفع قيمة الشحن", shp_pay_list, index=s_idx)
-            
-            submitted_main_edit = st.form_submit_button("💾 حفظ البيانات الأساسية للفاتورة")
-            if submitted_main_edit:
-                orders_df.loc[orders_df['Order_ID'] == edit_order_id, 'Customer'] = e_cust
-                orders_df.loc[orders_df['Order_ID'] == edit_order_id, 'Phone'] = e_phone
-                orders_df.loc[orders_df['Order_ID'] == edit_order_id, 'Region'] = e_region
-                orders_df.loc[orders_df['Order_ID'] == edit_order_id, 'Cargo_Company'] = e_cargo
-                orders_df.loc[orders_df['Order_ID'] == edit_order_id, 'Bags'] = e_bags
-                orders_df.loc[orders_df['Order_ID'] == edit_order_id, 'Products_Total'] = e_prod_tot
-                orders_df.loc[orders_df['Order_ID'] == edit_order_id, 'Shipping_Price'] = e_ship_p
-                orders_df.loc[orders_df['Order_ID'] == edit_order_id, 'Total'] = e_prod_tot + e_ship_p
-                orders_df.loc[orders_df['Order_ID'] == edit_order_id, 'Cargo_Barcode'] = e_barcode
-                orders_df.loc[orders_df['Order_ID'] == edit_order_id, 'Order_Payment'] = e_ord_pay
-                orders_df.loc[orders_df['Order_ID'] == edit_order_id, 'Shipping_Payment'] = e_shp_pay
-                
-                # Collection of product value depends only on Order_Payment; shipping payment is separate.
-                new_coll_status = "مدفوع بالكامل" if e_ord_pay == "تم الدفع" else "قيد التحصيل"
-                orders_df.loc[orders_df['Order_ID'] == edit_order_id, 'Collection_Status'] = new_coll_status
-
-                cargo_df_save = pd.DataFrame({"Cargo_Name": cargo_companies_list})
-                save_all_data(orders_df, stock_df, expenses_df, cargo_companies_list)
-                st.cache_data.clear()
-                st.success("✅ تم تحديث بيانات الفاتورة بنجاح!")
-                st.rerun()
-
-        st.markdown("---")
-        st.subheader("🛒 إدارة أصناف هذه الفاتورة:")
-        
-        current_parsed_items = parse_items_to_list(target_row['Items_Detail'])
-        
-        if current_parsed_items:
-            st.markdown("**الأصناف الحالية في الفاتورة:**")
-            for idx, item_dict in enumerate(current_parsed_items):
-                col_item_info1, col_item_info2 = st.columns([5, 1])
-                with col_item_info1:
-                    st.write(f"• {item_dict['Item']} &nbsp;|&nbsp; **الكمية:** {item_dict['Qty']}")
-                with col_item_info2:
-                    if st.button("🗑️ حذف", key=f"del_item_inv_{edit_order_id}_{idx}"):
-                        new_items = current_parsed_items.copy()
-                        new_items.pop(idx)
-                        adjusted_stock, stock_error = adjust_stock_for_order(stock_df, current_parsed_items, new_items)
-                        if stock_error:
-                            st.error(stock_error)
-                            st.stop()
-                        stock_df = adjusted_stock
-                        current_parsed_items = new_items
-                        new_items_str = " | ".join([f"{x['Item']} (الكمية: {x['Qty']})" for x in current_parsed_items]) if current_parsed_items else "لا توجد أصناف"
-                        orders_df.loc[orders_df['Order_ID'] == edit_order_id, 'Items_Detail'] = new_items_str
-                        
-                        cargo_df_save = pd.DataFrame({"Cargo_Name": cargo_companies_list})
-                        save_all_data(orders_df, stock_df, expenses_df, cargo_companies_list)
-                        st.cache_data.clear()
-                        st.success("✅ تم حذف الصنف بنجاح!")
-                        st.rerun()
-
-        st.markdown("---")
-        st.markdown("**➕ إضافة منتج جديد للفاتورة:**")
-        with st.form("add_item_to_inv_form"):
-            add_sel_item = st.selectbox("اختر المنتج", EXACT_ITEMS, key=f"add_item_sel_{edit_order_id}")
-            add_sel_qty = st.number_input("الكمية", min_value=1, value=1, key=f"add_item_qty_{edit_order_id}")
-            
-            if st.form_submit_button("➕ إضافة المنتج إلى الفاتورة"):
-                new_items = current_parsed_items.copy()
-                new_items.append({"Item": add_sel_item, "Qty": int(add_sel_qty)})
-                adjusted_stock, stock_error = adjust_stock_for_order(stock_df, current_parsed_items, new_items)
-                if stock_error:
-                    st.error(stock_error)
-                    st.stop()
-                stock_df = adjusted_stock
-                current_parsed_items = new_items
-                new_items_str = " | ".join([f"{x['Item']} (الكمية: {x['Qty']})" for x in current_parsed_items])
-                orders_df.loc[orders_df['Order_ID'] == edit_order_id, 'Items_Detail'] = new_items_str
-                
-                cargo_df_save = pd.DataFrame({"Cargo_Name": cargo_companies_list})
-                save_all_data(orders_df, stock_df, expenses_df, cargo_companies_list)
-                st.cache_data.clear()
-                st.success("✅ تمت إضافة المنتج بنجاح!")
-                st.rerun()
-
-        st.markdown("---")
-        if st.button("🗑️ حذف الفاتورة بالكامل نهائياً"):
-            old_items = parse_items_to_list(target_row["Items_Detail"])
-            adjusted_stock, stock_error = adjust_stock_for_order(stock_df, old_items, [])
-            if stock_error:
-                st.error(stock_error)
-                st.stop()
-            stock_df = adjusted_stock
-            orders_df = orders_df[orders_df['Order_ID'] != edit_order_id]
-            cargo_df_save = pd.DataFrame({"Cargo_Name": cargo_companies_list})
-            save_all_data(orders_df, stock_df, expenses_df, cargo_companies_list)
-            st.cache_data.clear()
-            st.success("🗑️ تم حذف الفاتورة بنجاح!")
-            st.rerun()
-    else:
-        st.info("لا توجد طلبيات مسجلة في النظام بعد.")
-
-elif menu == "إدارة المصروفات":
-    st.header("💸 إدارة المصروفات")
-    orders_df, stock_df, expenses_df, cargo_companies_list = load_data()
-    with st.form("add_expense_form"):
-        exp_date = st.date_input("التاريخ", datetime.date.today())
-        exp_category = st.selectbox("البند", ["إعلانات ميتا (Meta Ads)", "شراء أصناف / مواد خام (Purchases)", "سحب مبالغ مالية / مسحوبات شخصية (Withdrawals)", "مصروفات أخرى (Other Expenses)"])
-        exp_amount = st.number_input("المبلغ (OMR)", min_value=0.0, value=10.0)
-        exp_desc = st.text_input("الوصف")
-        if st.form_submit_button("💾 حفظ المصروف"):
-            new_exp_id = int(expenses_df['Expense_ID'].max() + 1) if not expenses_df.empty and not pd.isna(expenses_df['Expense_ID'].max()) else 1
-            new_row = {"Expense_ID": new_exp_id, "Date": str(exp_date), "Category": exp_category, "Amount": exp_amount, "Description": exp_desc}
-            expenses_df = pd.concat([expenses_df, pd.DataFrame([new_row])], ignore_index=True)
-            cargo_df_save = pd.DataFrame({"Cargo_Name": cargo_companies_list})
-            save_all_data(orders_df, stock_df, expenses_df, cargo_companies_list)
-            st.cache_data.clear()
-            st.success("✅ تم حفظ المصروف بنجاح!")
-            st.rerun()
-    if not expenses_df.empty:
-        st.dataframe(expenses_df, use_container_width=True)
-
-elif menu == "التقرير المالي التفصيلي":
-    st.header("📈 التقرير المالي التفصيلي والشامل")
-    orders_df, stock_df, expenses_df, _ = load_data()
-    
-    total_products_value = pd.to_numeric(orders_df['Products_Total'], errors='coerce').fillna(0).sum() if not orders_df.empty else 0.0
-    paid_mask = orders_df['Order_Payment'].astype(str).eq('تم الدفع') if not orders_df.empty else pd.Series(dtype=bool)
-    collected_products_total = pd.to_numeric(orders_df.loc[paid_mask, 'Products_Total'], errors='coerce').fillna(0).sum() if not orders_df.empty else 0.0
-    pending_products_total = pd.to_numeric(orders_df.loc[~paid_mask, 'Products_Total'], errors='coerce').fillna(0).sum() if not orders_df.empty else 0.0
-    total_shipping = pd.to_numeric(orders_df['Shipping_Price'], errors='coerce').fillna(0).sum() if not orders_df.empty else 0.0
-    shipping_paid = pd.to_numeric(orders_df.loc[orders_df['Shipping_Payment'].astype(str).eq('تم دفع الشحن'), 'Shipping_Price'], errors='coerce').fillna(0).sum() if not orders_df.empty else 0.0
-    shipping_pending = total_shipping - shipping_paid
-    total_expenses = pd.to_numeric(expenses_df['Amount'], errors='coerce').fillna(0).sum() if not expenses_df.empty else 0.0
-    # التحصيل المالي للشركة يخص المنتجات فقط؛ رسوم الشحن مستبعدة لأنها تذهب مباشرة للناقل.
-    total_collected_cash = collected_products_total
-    actual_treasury = total_collected_cash - total_expenses
-
-    m1, m2, m3, m4 = st.columns(4)
-    m1.metric("إجمالي مبيعات المنتجات", f"{total_products_value:.3f} ر.ع")
-    m2.metric("المحصل من مبيعات المنتجات", f"{total_collected_cash:.3f} ر.ع")
-    m3.metric("المبيعات غير المحصلة", f"{pending_products_total:.3f} ر.ع")
-    m4.metric("💰 صافي التدفق النقدي (بدون الشحن)", f"{actual_treasury:.3f} ر.ع")
-    st.caption(f"رسوم الشحن خارج حسابات لبانور وتُدفع مباشرة لشركات الشحن — مدفوع لشركات الشحن: {shipping_paid:.3f} ر.ع | متبقٍ لشركات الشحن: {shipping_pending:.3f} ر.ع | إجمالي رسوم الشحن: {total_shipping:.3f} ر.ع. لا تدخل هذه المبالغ في المبيعات أو التحصيل أو صافي التدفق النقدي.")
-    
-    st.markdown("---")
-    cargo_summary = get_cargo_summary_df(orders_df)
-    if not cargo_summary.empty:
-        st.dataframe(cargo_summary, use_container_width=True)
-
-elif menu == "سجل حركة المستخدم والاتصال":
-    st.header("🧾 سجل حركة المستخدم والاتصال")
-    if not IS_ADMIN:
-        st.error("هذا التقرير متاح للمدير فقط.")
-    else:
-        audit_df = read_activity_log(DB_FILE)
-        if audit_df.empty:
-            st.info("لا توجد حركات مسجلة بعد. سيبدأ النظام تسجيل العمليات المهمة والمزامنة من الآن.")
-        else:
-            if "Timestamp" in audit_df.columns:
-                audit_df["Timestamp"] = pd.to_datetime(audit_df["Timestamp"], errors="coerce")
-                date_range = st.date_input("فلترة السجل بالتاريخ", value=(datetime.date.today() - datetime.timedelta(days=30), datetime.date.today()))
-                if isinstance(date_range, tuple) and len(date_range) == 2:
-                    audit_df = audit_df[(audit_df["Timestamp"].dt.date >= date_range[0]) & (audit_df["Timestamp"].dt.date <= date_range[1])]
-            if "Connection_Status" in audit_df.columns:
-                connection_filter = st.selectbox("حالة الاتصال", ["الكل", "متصل - تمت المزامنة", "غير متصل أو رفض GitHub الطلب", "جارٍ مزامنة GitHub", "تم تحميل البيانات"])
-                if connection_filter != "الكل":
-                    audit_df = audit_df[audit_df["Connection_Status"].astype(str) == connection_filter]
-            st.metric("عدد الأحداث المسجلة", len(audit_df))
-            st.dataframe(audit_df.sort_values("Timestamp", ascending=False) if "Timestamp" in audit_df.columns else audit_df, use_container_width=True, hide_index=True)
-            st.download_button("📥 تحميل سجل الحركة CSV", audit_df.to_csv(index=False).encode("utf-8-sig"), file_name="LubaNur_Activity_Log.csv", mime="text/csv")
-        st.caption("يسجل النظام عمليات الدخول والخروج، وحفظ المعاملات، ومحاولات مزامنة GitHub ونتائجها. انقطاع اتصال المتصفح نفسه لا يمكن رصده لحظياً من الخادم؛ يسجل النظام فشل الاتصال عند محاولة المزامنة أو الحفظ.")
-
-elif menu == "الربحية والأرباح":
-    st.header("💹 قسم الربحية والأرباح")
-    st.info("تكاليف شراء المنتجات تظهر في هذا القسم فقط، ولا تظهر في الفواتير أو لوحة المبيعات أو تقارير شركات الشحن.")
-    orders_df, stock_df, expenses_df, _ = load_data()
-    costs_df = load_product_costs(DB_FILE)
-    stock_names = stock_df["Item_Name"].dropna().astype(str).str.strip().drop_duplicates().tolist()
-    cost_map = dict(zip(costs_df["Item_Name"], costs_df["Unit_Cost"]))
-    cost_editor_df = pd.DataFrame({"Item_Name": stock_names, "Unit_Cost": [float(cost_map.get(n, 0.0)) for n in stock_names]})
-    st.subheader("إدخال تكلفة شراء كل منتج")
-    st.caption("أدخل تكلفة الوحدة الواحدة لكل منتج بالريال العماني. تُحفظ التكاليف في ورقة مستقلة داخل Excel باسم Product_Costs.")
-    edited_costs = st.data_editor(cost_editor_df, use_container_width=True, hide_index=True, disabled=["Item_Name"], column_config={"Item_Name": st.column_config.TextColumn("اسم المنتج"), "Unit_Cost": st.column_config.NumberColumn("تكلفة الوحدة (ر.ع)", min_value=0.0, step=0.001, format="%.3f")}, key="profitability_cost_editor")
-    if IS_ADMIN and st.button("💾 حفظ تكاليف المنتجات", key="save_product_costs"):
-        try:
-            clean_costs = edited_costs[["Item_Name", "Unit_Cost"]].copy()
-            clean_costs["Unit_Cost"] = pd.to_numeric(clean_costs["Unit_Cost"], errors="coerce").fillna(0.0).clip(lower=0)
-            save_all_data(orders_df, stock_df, expenses_df, load_data()[3], product_costs_df=clean_costs)
-            st.cache_data.clear()
-            st.success("تم حفظ تكاليف المنتجات ومزامنتها مع ملف Excel.")
-            st.rerun()
-        except Exception as cost_error:
-            st.error(f"تعذر حفظ تكاليف المنتجات: {cost_error}")
-
-    detail_df, sales_value, cogs_value, expenses_value = calculate_profitability(orders_df, costs_df, expenses_df)
-    gross_profit = sales_value - cogs_value
-    net_profit = gross_profit - expenses_value
-    missing_costs = detail_df[detail_df["حالة التكلفة"] == "لم تُدخل"] if not detail_df.empty else pd.DataFrame()
-    st.markdown("---")
-    st.subheader("ملخص الأرباح")
-    p1, p2, p3 = st.columns(3)
-    p1.metric("مبيعات المنتجات (بدون الشحن)", f"{sales_value:.3f} ر.ع")
-    p2.metric("تكلفة المنتجات المباعة", f"{cogs_value:.3f} ر.ع")
-    p3.metric("مجمل الربح قبل المصروفات", f"{gross_profit:.3f} ر.ع")
-    p4, p5 = st.columns(2)
-    p4.metric("إجمالي المصروفات المخصومة", f"{expenses_value:.3f} ر.ع")
-    p5.metric("صافي الربح بعد خصم المصروفات", f"{net_profit:.3f} ر.ع")
-    st.subheader("تفاصيل تكلفة المنتجات المباعة")
-    if not detail_df.empty:
-        st.dataframe(detail_df, use_container_width=True, hide_index=True)
-    if not missing_costs.empty:
-        st.warning("هناك منتجات مباعة لم تُدخل تكلفة وحدتها بعد. لذلك صافي الربح الحالي غير نهائي، والتكلفة المحتسبة لهذه المنتجات تساوي صفراً حتى إدخالها.")
-        st.dataframe(missing_costs[["المنتج", "الكمية المباعة"]], use_container_width=True, hide_index=True)
-    st.caption("طريقة الحساب: مجمل الربح = مبيعات المنتجات − تكلفة الوحدات المباعة. صافي الربح = مجمل الربح − جميع المصروفات المسجلة. رسوم الشحن مستبعدة لأنها تخص شركة الشحن. التكاليف التي تدخلها الآن تُطبق على الكميات المباعة في الطلبات التاريخية أيضاً؛ إذا تغيرت تكلفة الشراء بمرور الوقت فستحتاج لاحقاً إلى سجل تكلفة بتاريخ سريان.")
-
-elif menu == "طلب توريد المخزون الحرِج":
-    st.header("🚨 طلب توريد المخزون الحرِج")
-    _, stock_df, _, _ = load_data()
-    critical_stock = stock_df[stock_df['Qty'] < 5].copy()
-    if not critical_stock.empty:
-        st.dataframe(critical_stock, use_container_width=True)
-    else:
-        st.success("🎉 ممتاز! جميع المخزونات في مستويات آمنة.")
+                        st.markdown(f"🚚 **مكان التسليم (نوع التس
