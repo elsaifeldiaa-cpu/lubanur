@@ -165,8 +165,14 @@ IS_ADMIN = st.session_state.user_role == "admin"
 # === تخصيص CSS لمظهر عصري وواضح (Elite UI) ===
 st.markdown("""
     <style>
-    .stApp { background-color: #101010; }
-    .main { direction: rtl; text-align: right; }
+    /* After login: keep the entire working system, reports and tables in a clean light theme.
+       The black-and-gold theme is intentionally limited to the login screen above. */
+    .stApp, [data-testid="stAppViewContainer"], [data-testid="stMain"],
+    [data-testid="stMainBlockContainer"], [data-testid="stHeader"] {
+        background-color: #ffffff !important;
+        color: #262626 !important;
+    }
+    .main { direction: rtl; text-align: right; background-color: #ffffff; color: #262626; }
     div[data-testid="stDataFrame"] { max-width: 100%; overflow-x: auto !important; touch-action: pan-x pan-y; }
     div[data-testid="stDataFrame"] [data-testid="glideDataEditor"] { touch-action: pan-x pan-y !important; }
     div[data-testid="stDataFrame"] ::-webkit-scrollbar { height: 12px; }
