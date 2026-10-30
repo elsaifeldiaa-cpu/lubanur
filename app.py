@@ -6,6 +6,9 @@ import re
 import tempfile
 import shutil
 import uuid
+import hmac
+import hashlib
+import json as _json
 from openpyxl import load_workbook, Workbook
 
 st.set_page_config(
@@ -30,51 +33,89 @@ if not ADMIN_PASSWORD or not VIEWER_PASSWORD:
     st.code('ADMIN_PASSWORD = "كلمة_مرور_المدير"\nVIEWER_PASSWORD = "كلمة_مرور_المشاهد"\nGITHUB_TOKEN = "توكن_خاص"\nGITHUB_REPO = "elsaifeldiaa-cpu/lubanur"\nGITHUB_BRANCH = "main"\nGITHUB_EXCEL_PATH = "system_database.xlsx"', language="toml")
     st.stop()
 
+# Restore login across refreshes using a signed, time-limited browser cookie.
+# The cookie contains only the role and expiry, never the password.
+try:
+    import extra_streamlit_components as stx
+    _cookie_manager = stx.CookieManager(key="lubanur_auth_cookie_manager")
+    _auth_cookie_available = True
+except Exception:
+    _cookie_manager = None
+    _auth_cookie_available = False
+
+SESSION_SECRET = get_secret("SESSION_SECRET", hashlib.sha256((ADMIN_PASSWORD + ":" + VIEWER_PASSWORD).encode("utf-8")).hexdigest())
+SESSION_COOKIE_NAME = "lubanur_session"
+SESSION_DAYS = 3650
+
+def _make_session_token(role):
+    expires = int((datetime.datetime.now() + datetime.timedelta(days=SESSION_DAYS)).timestamp())
+    payload = f"{role}|{expires}"
+    signature = hmac.new(SESSION_SECRET.encode("utf-8"), payload.encode("utf-8"), hashlib.sha256).hexdigest()
+    return f"{payload}|{signature}", datetime.datetime.fromtimestamp(expires)
+
+def _verify_session_token(token):
+    try:
+        role, expires_raw, signature = str(token).split("|", 2)
+        payload = f"{role}|{expires_raw}"
+        expected = hmac.new(SESSION_SECRET.encode("utf-8"), payload.encode("utf-8"), hashlib.sha256).hexdigest()
+        if role not in ("admin", "viewer") or not hmac.compare_digest(signature, expected):
+            return None
+        if int(expires_raw) <= int(datetime.datetime.now().timestamp()):
+            return None
+        return role
+    except Exception:
+        return None
+
 if "user_role" not in st.session_state:
     st.session_state.user_role = None
+if st.session_state.user_role is None and _auth_cookie_available:
+    _saved_cookie = _cookie_manager.get(SESSION_COOKIE_NAME)
+    _restored_role = _verify_session_token(_saved_cookie) if _saved_cookie else None
+    if _restored_role:
+        st.session_state.user_role = _restored_role
+        st.session_state.authenticated = True
 
 if st.session_state.user_role is None:
     # Modern responsive login screen; role is explicitly selected before password validation.
     st.markdown("""
     <style>
-      .stApp {
-        background: radial-gradient(circle at top right, #f4efe2 0%, #f7f8fb 42%, #eef1f6 100%);
-      }
+      .stApp { background: #080808 !important; color: #f4d08a !important; }
+      [data-testid="stHeader"], [data-testid="stToolbar"] { background: #080808 !important; }
+      [data-testid="stMainBlockContainer"] { color: #f4d08a !important; }
       [data-testid="stMainBlockContainer"] {
         padding-top: 5vh;
         max-width: 1100px;
       }
       .lubanur-login-title {
         text-align: center;
-        color: #17243a;
+        color: #f4c879;
         font-size: clamp(26px, 3.2vw, 38px);
         font-weight: 800;
         margin: 8px 0 4px 0;
       }
       .lubanur-login-subtitle {
         text-align: center;
-        color: #7a6844;
+        color: #d8b36b;
         font-size: 14px;
         margin: 0 0 22px 0;
       }
       [data-testid="stForm"] {
-        background: rgba(255,255,255,.96);
-        border: 1px solid #e6dfcf;
+        background: #151515;
+        border: 1px solid #b88a3b;
         border-radius: 20px;
         padding: 24px;
-        box-shadow: 0 16px 42px rgba(25,36,55,.10);
+        box-shadow: 0 16px 42px rgba(0,0,0,.55);
       }
       [data-testid="stForm"] button[kind="primaryFormSubmit"] {
-        background: linear-gradient(100deg, #17243a, #263d5b);
-        color: #fff;
-        border: 1px solid #c6a45a;
+        background: linear-gradient(100deg, #9b6c24, #e2bd70);
+        color: #080808;
+        border: 1px solid #f4d08a;
         border-radius: 12px;
         min-height: 48px;
         font-weight: 700;
       }
-      [data-testid="stForm"] input {
-        border-radius: 10px;
-      }
+      [data-testid="stForm"] input { border-radius: 10px; background: #222; color: #f8e2b4; }
+      [data-testid="stForm"] label, [data-testid="stRadio"] label { color: #f4d08a !important; }
       @media (max-width: 700px) {
         [data-testid="stMainBlockContainer"] { padding: 18px 14px 30px 14px; }
         [data-testid="stForm"] { padding: 16px; }
@@ -84,8 +125,10 @@ if st.session_state.user_role is None:
 
     login_left, login_center, login_right = st.columns([1, 1.15, 1], gap="large")
     with login_center:
-        st.markdown("<div style='text-align:center;font-size:46px;margin-bottom:4px'>🌿</div>", unsafe_allow_html=True)
-        st.markdown("<div class='lubanur-login-title'>لبانور</div>", unsafe_allow_html=True)
+        _logo_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "lubanur_logo.png")
+        if os.path.exists(_logo_path):
+            st.image(_logo_path, width=220)
+        st.markdown("<div class='lubanur-login-title'>LUBANUR | لبانور</div>", unsafe_allow_html=True)
         st.markdown("<div class='lubanur-login-subtitle'>نظام الإدارة والمبيعات والمخزون</div>", unsafe_allow_html=True)
         with st.form("lubanur_login_form", clear_on_submit=False, border=True):
             selected_login_role = st.radio(
@@ -105,6 +148,9 @@ if st.session_state.user_role is None:
             elif pwd == expected_password:
                 st.session_state.user_role = "admin" if selected_login_role == "مدير النظام" else "viewer"
                 st.session_state.authenticated = True
+                if _auth_cookie_available:
+                    _token, _expiry = _make_session_token(st.session_state.user_role)
+                    _cookie_manager.set(SESSION_COOKIE_NAME, _token, expires_at=_expiry)
                 st.session_state.login_event_pending = (
                     "تسجيل دخول المدير" if selected_login_role == "مدير النظام"
                     else "تسجيل دخول مستخدم العرض"
@@ -119,9 +165,14 @@ IS_ADMIN = st.session_state.user_role == "admin"
 # === تخصيص CSS لمظهر عصري وواضح (Elite UI) ===
 st.markdown("""
     <style>
-    .main {
-        direction: rtl;
-        text-align: right;
+    .stApp { background-color: #101010; }
+    .main { direction: rtl; text-align: right; }
+    div[data-testid="stDataFrame"] { max-width: 100%; overflow-x: auto !important; touch-action: pan-x pan-y; }
+    div[data-testid="stDataFrame"] [data-testid="glideDataEditor"] { touch-action: pan-x pan-y !important; }
+    div[data-testid="stDataFrame"] ::-webkit-scrollbar { height: 12px; }
+    div[data-testid="stDataFrame"] ::-webkit-scrollbar-thumb { background: #b88a3b; border-radius: 8px; }
+    @media (pointer: coarse) {
+      div[data-testid="stDataFrame"] { -webkit-overflow-scrolling: touch !important; }
     }
     .stSidebar {
         background-color: #f8f9fa;
@@ -176,9 +227,14 @@ def github_api(method, path, payload=None):
         detail = exc.read().decode("utf-8", errors="replace")
         raise RuntimeError(f"GitHub API ({exc.code}): {detail[:500]}") from exc
 
+SYNC_PENDING_FILE = ".lubanur_sync_pending"
+
 def github_download_workbook():
-    """Pull the repository's workbook before app initialization."""
+    """Pull the repository workbook unless a prior local transaction is awaiting upload."""
     if not GITHUB_TOKEN:
+        return False
+    if os.path.exists(SYNC_PENDING_FILE) and os.path.exists(DB_FILE) and os.path.getsize(DB_FILE) > 0:
+        st.warning("توجد معاملة محفوظة محلياً بانتظار المزامنة؛ تم منع تنزيل نسخة GitHub القديمة حتى لا تُفقد المعاملة.")
         return False
     try:
         meta = github_api("GET", f"contents/{GITHUB_EXCEL_PATH}?ref={GITHUB_BRANCH}")
@@ -290,7 +346,7 @@ def read_activity_log(path=DB_FILE):
 
 def normalize_orders_df(orders):
     if orders.empty:
-        return pd.DataFrame(columns=["Order_ID", "Date", "Customer", "Phone", "Region", "Items_Detail", "Products_Total", "Shipping_Price", "Total", "Order_Payment", "Shipping_Payment", "Cargo_Company", "Delivery_Type", "Delivery_Status", "Collection_Status", "Bags", "Cargo_Barcode"])
+        return pd.DataFrame(columns=["Order_ID", "Date", "Customer", "Phone", "Region", "Items_Detail", "Products_Total", "Shipping_Price", "Total", "Order_Payment", "Shipping_Payment", "Cargo_Company", "Delivery_Type", "Delivery_Status", "Collection_Status", "Payment_Channel", "Carrier_Collection_Status", "Bags", "Cargo_Barcode"])
     
     orders.columns = [str(c).strip() for c in orders.columns]
     
@@ -310,6 +366,8 @@ def normalize_orders_df(orders):
         'نوع التسليم': 'Delivery_Type', 'delivery_type': 'Delivery_Type', 'Delivery_Type': 'Delivery_Type',
         'حالة التوصيل': 'Delivery_Status', 'delivery_status': 'Delivery_Status', 'Delivery_Status': 'Delivery_Status',
         'حالة التحصيل': 'Collection_Status', 'collection_status': 'Collection_Status', 'Collection_Status': 'Collection_Status',
+        'طريقة الدفع': 'Payment_Channel', 'payment_channel': 'Payment_Channel', 'Payment_Channel': 'Payment_Channel',
+        'حالة تحصيل شركة الشحن': 'Carrier_Collection_Status', 'carrier_collection_status': 'Carrier_Collection_Status', 'Carrier_Collection_Status': 'Carrier_Collection_Status',
         'الأكياس': 'Bags', 'bags': 'Bags', 'Bags': 'Bags', 'عدد الأكياس': 'Bags',
         'باركود شركة الشحن': 'Cargo_Barcode', 'cargo_barcode': 'Cargo_Barcode', 'Cargo_Barcode': 'Cargo_Barcode'
     }
@@ -322,14 +380,15 @@ def normalize_orders_df(orders):
         "Shipping_Price": 0.0, "Total": 0.0, "Order_Payment": "لم يتم الدفع", 
         "Shipping_Payment": "لم يتم دفع الشحن", "Cargo_Company": "وصل لي", 
         "Delivery_Type": "من المكتب (Pickup)", "Delivery_Status": "قيد التحضير", 
-        "Collection_Status": "قيد التحصيل", "Bags": 1, "Cargo_Barcode": ""
+        "Collection_Status": "قيد التحصيل", "Payment_Channel": "",
+        "Carrier_Collection_Status": "لم يُسلّم لشركة الشحن", "Bags": 1, "Cargo_Barcode": ""
     }
     
     for col, default_val in expected_defaults.items():
         if col not in orders.columns:
             orders[col] = default_val
         else:
-            if col in ["Customer", "Phone", "Region", "Cargo_Company", "Items_Detail", "Order_Payment", "Shipping_Payment", "Delivery_Type", "Delivery_Status", "Collection_Status", "Date", "Cargo_Barcode"]:
+            if col in ["Customer", "Phone", "Region", "Cargo_Company", "Items_Detail", "Order_Payment", "Shipping_Payment", "Delivery_Type", "Delivery_Status", "Collection_Status", "Payment_Channel", "Carrier_Collection_Status", "Date", "Cargo_Barcode"]:
                 orders[col] = orders[col].fillna(default_val).astype(str)
                 orders[col] = orders[col].replace(["nan", "None", "", "NaN"], default_val)
             elif col in ["Products_Total", "Shipping_Price", "Total", "Bags", "Order_ID"]:
@@ -341,6 +400,25 @@ def normalize_orders_df(orders):
     # Product collection is determined ONLY by invoice/product payment, never shipping payment.
     orders['Collection_Status'] = orders['Order_Payment'].astype(str).map(
         lambda value: 'مدفوع بالكامل' if value.strip() == 'تم الدفع' else 'قيد التحصيل'
+    )
+    # Legacy rows are classified conservatively; prepaid invoices are never assigned to the carrier.
+    def _legacy_carrier_state(row):
+        current = str(row.get('Carrier_Collection_Status', '')).strip()
+        valid_done = {'تم التحصيل من العميل - بانتظار التوريد', 'تم التوريد إلى لبانور'}
+        if current in valid_done:
+            return current
+        if str(row.get('Order_Payment', '')).strip() == 'تم الدفع':
+            channel = str(row.get('Payment_Channel', '')).strip()
+            if channel == 'تحصيل عند الاستلام عبر شركة الشحن':
+                return 'تم التحصيل من العميل - بانتظار التوريد'
+            return 'غير مطلوب - دفع مباشر مسبقاً'
+        if str(row.get('Delivery_Status', '')).strip() in {'تم التسليم لشركة الشحن', 'جاري التوصيل', 'تم تسليم العميل'}:
+            return 'قيد التحصيل لدى شركة الشحن'
+        return 'لم يُسلّم لشركة الشحن'
+    orders['Carrier_Collection_Status'] = orders.apply(_legacy_carrier_state, axis=1)
+    orders['Payment_Channel'] = orders.apply(
+        lambda row: str(row.get('Payment_Channel') or ('دفع مباشر إلى لبانور' if str(row.get('Order_Payment')) == 'تم الدفع' else 'تحصيل عند الاستلام عبر شركة الشحن')),
+        axis=1
     )
     return orders
 
@@ -470,12 +548,17 @@ def save_all_data(orders_df, stock_df, expenses_df, cargo_companies_list, produc
         # Verify the temporary workbook before replacing the active database.
         _read_workbook_safely(temp_path)
         os.replace(temp_path, DB_FILE)
+        # A durable marker prevents startup from overwriting this local transaction
+        # with an older GitHub copy if the network upload fails.
+        with open(SYNC_PENDING_FILE, "w", encoding="utf-8") as marker:
+            marker.write(datetime.datetime.now().isoformat())
         try:
             github_upload_workbook()
-            append_activity_log(DB_FILE, "نجاح مزامنة GitHub", "تم رفع ملف Excel بعد الحفظ", "متصل - تمت المزامنة")
+            if os.path.exists(SYNC_PENDING_FILE):
+                os.remove(SYNC_PENDING_FILE)
         except Exception as sync_exc:
-            append_activity_log(DB_FILE, "فشل مزامنة GitHub", str(sync_exc), "غير متصل أو رفض GitHub الطلب")
-            raise RuntimeError(f"تم حفظ البيانات محلياً، لكن فشلت مزامنتها مع GitHub: {sync_exc}") from sync_exc
+            append_activity_log(DB_FILE, "تعليق مزامنة GitHub", str(sync_exc), "تم الحفظ محلياً - المزامنة معلقة")
+            st.warning(f"تم حفظ المعاملة محلياً بنجاح، لكن المزامنة مع GitHub معلقة وستحتاج إلى إعادة المحاولة: {sync_exc}")
     finally:
         if os.path.exists(temp_path):
             os.remove(temp_path)
@@ -511,7 +594,7 @@ def init_db():
     else:
         stock = pd.DataFrame({"Item_Name": EXACT_ITEMS, "Qty": [50] * len(EXACT_ITEMS)})
 
-    orders = pd.DataFrame(columns=["Order_ID", "Date", "Customer", "Phone", "Region", "Items_Detail", "Products_Total", "Shipping_Price", "Total", "Order_Payment", "Shipping_Payment", "Cargo_Company", "Delivery_Type", "Delivery_Status", "Collection_Status", "Bags", "Cargo_Barcode"])
+    orders = pd.DataFrame(columns=["Order_ID", "Date", "Customer", "Phone", "Region", "Items_Detail", "Products_Total", "Shipping_Price", "Total", "Order_Payment", "Shipping_Payment", "Cargo_Company", "Delivery_Type", "Delivery_Status", "Collection_Status", "Payment_Channel", "Carrier_Collection_Status", "Bags", "Cargo_Barcode"])
     expenses = pd.DataFrame(columns=["Expense_ID", "Date", "Category", "Amount", "Description"])
     cargo_df = pd.DataFrame({"Cargo_Name": DEFAULT_CARGO_COMPANIES})
     fd, temp_path = tempfile.mkstemp(suffix=".xlsx", dir=os.path.dirname(os.path.abspath(DB_FILE)))
@@ -534,6 +617,13 @@ def init_db():
 try:
     GITHUB_DATA_LOADED = github_download_workbook()
     init_db()
+    if os.path.exists(SYNC_PENDING_FILE) and GITHUB_TOKEN:
+        try:
+            github_upload_workbook()
+            os.remove(SYNC_PENDING_FILE)
+            st.success("تمت استعادة المزامنة المعلقة ورفع آخر نسخة محفوظة من Excel إلى GitHub.")
+        except Exception as pending_sync_error:
+            st.warning(f"لا تزال هناك معاملة محفوظة محلياً بانتظار المزامنة؛ لم يتم استبدالها بنسخة GitHub: {pending_sync_error}")
 except Exception as db_init_error:
     st.error("تعذر فتح قاعدة البيانات بأمان. لم يتم إنشاء ملف بديل أو الكتابة فوق البيانات الموجودة.")
     st.exception(db_init_error)
@@ -700,7 +790,7 @@ if not st.session_state.get("startup_logged"):
     append_activity_log(DB_FILE, "بدء جلسة التطبيق", "تم تشغيل التطبيق وتحميل ملف البيانات", "تم تحميل أحدث نسخة من GitHub" if GITHUB_DATA_LOADED else "استخدمت النسخة المحلية؛ لم يثبت اتصال GitHub")
     st.session_state.startup_logged = True
 
-st.sidebar.markdown('<p class="sidebar-title">🌟 لبانور - لوحة التحكم الإدارية</p>', unsafe_allow_html=True)
+st.sidebar.markdown('<p class="sidebar-title">🌟 LUBANUR | لبانور - لوحة التحكم الإدارية</p>', unsafe_allow_html=True)
 st.sidebar.markdown('<p class="version-tag">📌 الإصدار المحدث: v6:10pm 28-10-2026</p>', unsafe_allow_html=True)
 st.sidebar.info("👑 المدير" if IS_ADMIN else "👁️ وضع العرض فقط")
 
@@ -726,7 +816,8 @@ st.sidebar.caption("تتم مزامنة ملف Excel مع GitHub بعد كل ع�
 if IS_ADMIN and st.sidebar.button("☁️ مزامنة Excel الآن مع GitHub"):
     try:
         github_upload_workbook()
-        append_activity_log(DB_FILE, "مزامنة يدوية ناجحة", "ضغط المستخدم زر المزامنة اليدوية", "متصل - تمت المزامنة")
+        if os.path.exists(SYNC_PENDING_FILE):
+            os.remove(SYNC_PENDING_FILE)
         st.sidebar.success("تمت مزامنة Excel مع GitHub بنجاح")
     except Exception as sync_error:
         append_activity_log(DB_FILE, "فشل المزامنة اليدوية", str(sync_error), "غير متصل أو رفض GitHub الطلب")
@@ -791,6 +882,8 @@ if uploaded_backup is not None:
 
 if st.sidebar.button("🔒 تسجيل الخروج (Logout)"):
     append_activity_log(DB_FILE, "تسجيل خروج", "ضغط المستخدم زر تسجيل الخروج", "جلسة التطبيق نشطة")
+    if _auth_cookie_available:
+        _cookie_manager.delete(SESSION_COOKIE_NAME)
     st.session_state.authenticated = False
     st.session_state.user_role = None
     st.rerun()
@@ -826,8 +919,10 @@ def get_cargo_summary_df(orders_df):
             'شركة الشحن': str(company) if pd.notna(company) else 'غير محدد',
             'عدد الطلبات': len(group),
             'مبيعات المنتجات (ر.ع)': products_sales,
-            'المحصل من مبيعات المنتجات (ر.ع)': collected_products,
-            'المبيعات غير المحصلة (ر.ع)': uncollected_products,
+            'مدفوع من العميل (ر.ع)': collected_products,
+            'لم يدفعه العميل بعد (ر.ع)': uncollected_products,
+            'تم تحصيله بواسطة الشحن ولم يورد (ر.ع)': float(group.loc[group['Carrier_Collection_Status'].astype(str).eq('تم التحصيل من العميل - بانتظار التوريد'), 'Products_Total'].sum()) if 'Carrier_Collection_Status' in group.columns else 0.0,
+            'تم توريده إلى لبانور (ر.ع)': float(group.loc[group['Carrier_Collection_Status'].astype(str).eq('تم التوريد إلى لبانور'), 'Products_Total'].sum()) if 'Carrier_Collection_Status' in group.columns else 0.0,
             'رسوم الشحن المحصلة للشركة (معلومة فقط)': shipping_collected,
             'رسوم الشحن غير المحصلة للشركة (معلومة فقط)': shipping_pending,
         })
@@ -842,9 +937,17 @@ if menu == "اللوحة الرئيسية":
     total_expenses = pd.to_numeric(expenses_df['Amount'], errors='coerce').fillna(0).sum() if not expenses_df.empty else 0.0
 
     paid_mask = orders_df['Order_Payment'].astype(str).eq('تم الدفع') if not orders_df.empty else pd.Series(dtype=bool)
-    collected_products_total = pd.to_numeric(orders_df.loc[paid_mask, 'Products_Total'], errors='coerce').fillna(0).sum() if not orders_df.empty else 0.0
-    pending_products_total = pd.to_numeric(orders_df.loc[~paid_mask, 'Products_Total'], errors='coerce').fillna(0).sum() if not orders_df.empty else 0.0
-    # رسوم الشحن تُدفع مباشرة لشركة الشحن؛ لا تُضاف إلى إيرادات أو تحصيلات أو خزينة لبانور.
+    if not orders_df.empty:
+        direct_paid = orders_df.get('Payment_Channel', pd.Series('دفع مباشر إلى لبانور', index=orders_df.index)).astype(str).eq('دفع مباشر إلى لبانور')
+        carrier_remitted = orders_df.get('Carrier_Collection_Status', pd.Series('', index=orders_df.index)).astype(str).eq('تم التوريد إلى لبانور')
+        received_by_lubanur_mask = paid_mask & (direct_paid | carrier_remitted)
+        carrier_remittance_pending_mask = orders_df.get('Carrier_Collection_Status', pd.Series('', index=orders_df.index)).astype(str).eq('تم التحصيل من العميل - بانتظار التوريد')
+        collected_products_total = pd.to_numeric(orders_df.loc[received_by_lubanur_mask, 'Products_Total'], errors='coerce').fillna(0).sum()
+        pending_products_total = pd.to_numeric(orders_df.loc[~paid_mask, 'Products_Total'], errors='coerce').fillna(0).sum()
+        carrier_remittance_pending_total = pd.to_numeric(orders_df.loc[carrier_remittance_pending_mask, 'Products_Total'], errors='coerce').fillna(0).sum()
+    else:
+        collected_products_total = pending_products_total = carrier_remittance_pending_total = 0.0
+    # Only direct receipts and amounts actually remitted by the carrier enter the company's treasury.
     total_collected_cash = collected_products_total
     actual_treasury = total_collected_cash - total_expenses
     shipping_paid = pd.to_numeric(orders_df.loc[orders_df['Shipping_Payment'].astype(str).eq('تم دفع الشحن'), 'Shipping_Price'], errors='coerce').fillna(0).sum() if not orders_df.empty else 0.0
@@ -858,7 +961,7 @@ if menu == "اللوحة الرئيسية":
 
     st.markdown("---")
     sc1, sc2 = st.columns(2)
-    sc1.metric("⏳ المبيعات غير المحصلة لدى شركات الشحن", f"{pending_products_total:.3f} ر.ع")
+    sc1.metric("⏳ لم يدفعها العميل بعد", f"{pending_products_total:.3f} ر.ع", f"محصل بواسطة شركة الشحن ولم يورد: {carrier_remittance_pending_total:.3f} ر.ع")
     sc2.metric("🚚 رسوم الشحن الخاصة بشركات الشحن (خارج الحسابات)", f"مدفوع: {shipping_paid:.3f} | متبقٍ: {shipping_unpaid:.3f} ر.ع", f"الإجمالي: {total_shipping:.3f} ر.ع — لا يدخل في حسابات لبانور")
 
     st.markdown("---")
@@ -952,7 +1055,10 @@ elif menu == "تسجيل طلب جديد":
                         "Order_ID": next_order_id, "Date": str(order_date), "Customer": cust_name, "Phone": phone, "Region": region,
                         "Items_Detail": items_detail_str, "Products_Total": products_total, "Shipping_Price": shipping_price, "Total": grand_total,
                         "Order_Payment": order_payment, "Shipping_Payment": shipping_payment, "Cargo_Company": cargo_company, "Delivery_Type": delivery_type,
-                        "Delivery_Status": "قيد التحضير", "Collection_Status": coll_status, "Bags": bags, "Cargo_Barcode": ""
+                        "Delivery_Status": "قيد التحضير", "Collection_Status": coll_status,
+                        "Payment_Channel": "دفع مباشر إلى لبانور" if order_payment == "تم الدفع" else "تحصيل عند الاستلام عبر شركة الشحن",
+                        "Carrier_Collection_Status": "غير مطلوب - دفع مباشر مسبقاً" if order_payment == "تم الدفع" else "لم يُسلّم لشركة الشحن",
+                        "Bags": bags, "Cargo_Barcode": ""
                     }
                 
                     for r in st.session_state.cart:
@@ -1052,7 +1158,8 @@ elif menu == "تتبع الشحنات والتحصيل":
                 "اسم العميل": "Customer", "رقم هاتف العميل": "Phone", "المنطقة": "Region",
                 "شركة الشحن": "Cargo_Company", "رقم الباركود": "Cargo_Barcode", "عدد الأكياس": "Bags",
                 "حالة الدفع": "Order_Payment", "حالة الشحن والتوصيل": "Delivery_Status",
-                "حالة التحصيل": "Collection_Status", "قيمة المنتجات": "Products_Total",
+                "حالة التحصيل": "Collection_Status", "حالة تحصيل شركة الشحن": "Carrier_Collection_Status",
+                "طريقة الدفع": "Payment_Channel", "قيمة المنتجات": "Products_Total",
                 "قيمة الشحن": "Shipping_Price", "الإجمالي شامل الشحن": "Total"
             }
             default_visible = ["رقم الفاتورة", "رقم ID", "رقم الباركود", "حالة الدفع", "حالة الشحن والتوصيل", "قيمة المنتجات", "رقم هاتف العميل"]
@@ -1072,7 +1179,7 @@ elif menu == "تتبع الشحنات والتحصيل":
                 use_container_width=True,
                 selection_mode="single-row",
                 on_select="rerun",
-                key="orders_grid_select"
+                key="orders_grid_select_" + hashlib.sha1("|".join(selected_labels).encode("utf-8")).hexdigest()[:10]
             )
             
             selected_rows = event.selection.rows if hasattr(event, 'selection') else []
@@ -1116,8 +1223,15 @@ elif menu == "تتبع الشحنات والتحصيل":
                 s_i = shipping_pay_options.index(cur_s_pay) if cur_s_pay in shipping_pay_options else 0
                 new_s_pay = q_col3.selectbox("دفع الشحن", shipping_pay_options, index=s_i)
                 
-                st.caption("حالة التحصيل تُحدد تلقائياً من حالة دفع المنتجات، ولا تتأثر بحالة دفع الشحن.")
-                
+                st.caption("حالة دفع الفاتورة مستقلة عن حالة تحصيل شركة الشحن وتوريد الأموال إلى لبانور.")
+                carrier_status_options = [
+                    "غير مطلوب - دفع مباشر مسبقاً", "لم يُسلّم لشركة الشحن",
+                    "قيد التحصيل لدى شركة الشحن", "تم التحصيل من العميل - بانتظار التوريد",
+                    "تم التوريد إلى لبانور"
+                ]
+                cur_carrier_status = str(target_order_row.get('Carrier_Collection_Status', 'لم يُسلّم لشركة الشحن'))
+                carrier_idx = carrier_status_options.index(cur_carrier_status) if cur_carrier_status in carrier_status_options else 0
+                new_carrier_status = st.selectbox("حالة تحصيل شركة الشحن وتوريد المبلغ", carrier_status_options, index=carrier_idx)
                 new_barcode_val = st.text_input("تعديل باركود شركة الشحن", value=str(target_order_row.get('Cargo_Barcode', '')))
                 
                 if st.form_submit_button("💾 حفظ وتحديث حالة الطلبية فوراً"):
@@ -1125,6 +1239,22 @@ elif menu == "تتبع الشحنات والتحصيل":
                     orders_df.loc[orig_idx, 'Order_Payment'] = new_o_pay
                     orders_df.loc[orig_idx, 'Shipping_Payment'] = new_s_pay
                     orders_df.loc[orig_idx, 'Collection_Status'] = 'مدفوع بالكامل' if new_o_pay == 'تم الدفع' else 'قيد التحصيل'
+                    # Prevent a prepaid invoice from being marked as awaiting courier collection.
+                    if new_o_pay == 'تم الدفع' and new_carrier_status in {'لم يُسلّم لشركة الشحن', 'قيد التحصيل لدى شركة الشحن'}:
+                        new_carrier_status = 'غير مطلوب - دفع مباشر مسبقاً'
+                    elif new_o_pay == 'لم يتم الدفع' and new_d_stat in {'تم التسليم لشركة الشحن', 'جاري التوصيل', 'تم تسليم العميل'} and new_carrier_status == 'لم يُسلّم لشركة الشحن':
+                        new_carrier_status = 'قيد التحصيل لدى شركة الشحن'
+                    orders_df.loc[orig_idx, 'Carrier_Collection_Status'] = new_carrier_status
+                    if new_carrier_status == 'غير مطلوب - دفع مباشر مسبقاً':
+                        orders_df.loc[orig_idx, 'Order_Payment'] = 'تم الدفع'
+                        orders_df.loc[orig_idx, 'Payment_Channel'] = 'دفع مباشر إلى لبانور'
+                    elif new_carrier_status == 'قيد التحصيل لدى شركة الشحن':
+                        orders_df.loc[orig_idx, 'Order_Payment'] = 'لم يتم الدفع'
+                        orders_df.loc[orig_idx, 'Payment_Channel'] = 'تحصيل عند الاستلام عبر شركة الشحن'
+                    elif new_carrier_status in {'تم التحصيل من العميل - بانتظار التوريد', 'تم التوريد إلى لبانور'}:
+                        orders_df.loc[orig_idx, 'Order_Payment'] = 'تم الدفع'
+                        orders_df.loc[orig_idx, 'Payment_Channel'] = 'تحصيل عبر شركة الشحن'
+                    orders_df.loc[orig_idx, 'Collection_Status'] = 'مدفوع بالكامل' if str(orders_df.loc[orig_idx, 'Order_Payment']) == 'تم الدفع' else 'قيد التحصيل'
                     orders_df.loc[orig_idx, 'Cargo_Barcode'] = new_barcode_val
                     
                     cargo_df_save = pd.DataFrame({"Cargo_Name": cargo_companies_list})
@@ -1348,15 +1478,19 @@ elif menu == "تقرير الشحن":
                 "حالة تسليم العميل": filtered_cargo_df['Delivery_Status'],
                 "قيمة مبيعات المنتجات (ر.ع)": filtered_cargo_df['Products_Total'],
                 "حالة تحصيل المنتجات": filtered_cargo_df['Order_Payment'],
-                "المحصل من المنتجات (ر.ع)": filtered_cargo_df.apply(lambda r: r['Products_Total'] if str(r['Order_Payment']) == 'تم الدفع' else 0, axis=1),
-                "المتبقي من المنتجات (ر.ع)": filtered_cargo_df.apply(lambda r: 0 if str(r['Order_Payment']) == 'تم الدفع' else r['Products_Total'], axis=1),
+                "حالة التحصيل لدى شركة الشحن": filtered_cargo_df['Carrier_Collection_Status'],
+                "طريقة الدفع": filtered_cargo_df['Payment_Channel'],
+                "مدفوع من العميل (ر.ع)": filtered_cargo_df.apply(lambda r: r['Products_Total'] if str(r['Order_Payment']) == 'تم الدفع' else 0, axis=1),
+                "بانتظار توريد شركة الشحن (ر.ع)": filtered_cargo_df.apply(lambda r: r['Products_Total'] if str(r.get('Carrier_Collection_Status', '')) == 'تم التحصيل من العميل - بانتظار التوريد' else 0, axis=1),
+                "تم توريده إلى لبانور (ر.ع)": filtered_cargo_df.apply(lambda r: r['Products_Total'] if str(r.get('Carrier_Collection_Status', '')) == 'تم التوريد إلى لبانور' or str(r.get('Payment_Channel', '')) == 'دفع مباشر إلى لبانور' and str(r['Order_Payment']) == 'تم الدفع' else 0, axis=1),
+                "المتبقي على العميل (ر.ع)": filtered_cargo_df.apply(lambda r: r['Products_Total'] if str(r['Order_Payment']) != 'تم الدفع' else 0, axis=1),
                 "رسوم الشحن (للشركة مباشرة - خارج إيرادات لبانور)": filtered_cargo_df['Shipping_Price'],
                 "حالة دفع الشحن": filtered_cargo_df['Shipping_Payment'],
                 "باركود الشحن": filtered_cargo_df['Cargo_Barcode'],
             })
 
             st.markdown(f"### 📋 بيان شحنات شركة: **{selected_cargo}** (إجمالي الشحنات: {len(report_display_df)})")
-            st.caption("حالة تسليم العميل موضحة لكل فاتورة. رسوم الشحن تخص شركة الشحن فقط، وتُعرض للمطابقة التشغيلية ولا تدخل في إيرادات لبانور أو تحصيل المنتجات.")
+            st.caption("حالة تسليم العميل وحالة تحصيل شركة الشحن وتوريد الأموال موضحة لكل فاتورة بشكل مستقل. رسوم الشحن تخص شركة الشحن ولا تدخل في إيرادات لبانور.")
             # Restore native interactive dataframe behavior:
             # users choose visible columns, resize column headers directly,
             # and swipe/scroll horizontally when the table is wider than the screen.
@@ -1387,8 +1521,9 @@ elif menu == "تقرير الشحن":
             st.markdown("#### ملخص حساب المنتجات لدى شركة الشحن")
             k1, k2, k3 = st.columns(3)
             k1.metric("مبيعات المنتجات", f"{products_sales:.3f} ر.ع")
-            k2.metric("المحصل", f"{products_collected:.3f} ر.ع")
-            k3.metric("المبيعات غير المحصلة / المتبقي", f"{products_pending:.3f} ر.ع")
+            carrier_waiting = pd.to_numeric(filtered_cargo_df.loc[filtered_cargo_df['Carrier_Collection_Status'].astype(str).eq('تم التحصيل من العميل - بانتظار التوريد'), 'Products_Total'], errors='coerce').fillna(0).sum()
+            k2.metric("مدفوع من العميل", f"{products_collected:.3f} ر.ع")
+            k3.metric("لم يدفعه العميل بعد", f"{products_pending:.3f} ر.ع", f"بانتظار توريد الشحن: {carrier_waiting:.3f} ر.ع")
             st.caption("رسوم الشحن معروضة للمراجعة التشغيلية فقط؛ فهي تخص شركة الشحن ولا تدخل في إيرادات لبانور أو تحصيل المنتجات. إجمالي الفاتورة قد يعرضها للعميل كبند منفصل، لكن التقارير المالية تحتسب قيمة المنتجات فقط.")
         else:
             st.warning("لا توجد شحنات مطابقة لخيارات البحث المحددة.")
@@ -1532,6 +1667,13 @@ elif menu == "تعديل وحذف الفواتير":
                 orders_df.loc[orders_df['Order_ID'] == edit_order_id, 'Cargo_Barcode'] = e_barcode
                 orders_df.loc[orders_df['Order_ID'] == edit_order_id, 'Order_Payment'] = e_ord_pay
                 orders_df.loc[orders_df['Order_ID'] == edit_order_id, 'Shipping_Payment'] = e_shp_pay
+                if e_ord_pay == 'تم الدفع' and str(target_row.get('Payment_Channel', '')) != 'تحصيل عبر شركة الشحن':
+                    orders_df.loc[orders_df['Order_ID'] == edit_order_id, 'Payment_Channel'] = 'دفع مباشر إلى لبانور'
+                    orders_df.loc[orders_df['Order_ID'] == edit_order_id, 'Carrier_Collection_Status'] = 'غير مطلوب - دفع مباشر مسبقاً'
+                elif e_ord_pay == 'لم يتم الدفع':
+                    orders_df.loc[orders_df['Order_ID'] == edit_order_id, 'Payment_Channel'] = 'تحصيل عند الاستلام عبر شركة الشحن'
+                    if str(target_row.get('Delivery_Status', '')) in {'تم التسليم لشركة الشحن', 'جاري التوصيل', 'تم تسليم العميل'}:
+                        orders_df.loc[orders_df['Order_ID'] == edit_order_id, 'Carrier_Collection_Status'] = 'قيد التحصيل لدى شركة الشحن'
                 
                 # Collection of product value depends only on Order_Payment; shipping payment is separate.
                 new_coll_status = "مدفوع بالكامل" if e_ord_pay == "تم الدفع" else "قيد التحصيل"
