@@ -32,29 +32,86 @@ if not ADMIN_PASSWORD or not VIEWER_PASSWORD:
 
 if "user_role" not in st.session_state:
     st.session_state.user_role = None
+
 if st.session_state.user_role is None:
-    st.markdown("<h2 style='text-align:center'>🔐 تسجيل الدخول لنظام لبانور</h2>", unsafe_allow_html=True)
-    # Use a Streamlit form so the password and submit action are sent together.
-    # This also supports pressing Enter and avoids relying on a separate button event.
-    with st.form("lubanur_login_form", clear_on_submit=False):
-        pwd = st.text_input("كلمة المرور", type="password", key="login_pass")
-        login_submitted = st.form_submit_button("دخول", use_container_width=True)
-    if login_submitted:
-        if not pwd:
-            st.warning("يرجى إدخال كلمة المرور أولاً.")
-        elif pwd == ADMIN_PASSWORD:
-            st.session_state.user_role = "admin"
-            st.session_state.authenticated = True
-            st.session_state.login_event_pending = "تسجيل دخول المدير"
-            st.rerun()
-        elif pwd == VIEWER_PASSWORD:
-            st.session_state.user_role = "viewer"
-            st.session_state.authenticated = True
-            st.session_state.login_event_pending = "تسجيل دخول مستخدم العرض"
-            st.rerun()
-        else:
-            st.session_state.login_event_pending = "محاولة دخول فاشلة"
-            st.error("كلمة المرور غير صحيحة")
+    # Modern responsive login screen; role is explicitly selected before password validation.
+    st.markdown("""
+    <style>
+      .stApp {
+        background: radial-gradient(circle at top right, #f4efe2 0%, #f7f8fb 42%, #eef1f6 100%);
+      }
+      [data-testid="stMainBlockContainer"] {
+        padding-top: 5vh;
+        max-width: 1100px;
+      }
+      .lubanur-login-title {
+        text-align: center;
+        color: #17243a;
+        font-size: clamp(26px, 3.2vw, 38px);
+        font-weight: 800;
+        margin: 8px 0 4px 0;
+      }
+      .lubanur-login-subtitle {
+        text-align: center;
+        color: #7a6844;
+        font-size: 14px;
+        margin: 0 0 22px 0;
+      }
+      [data-testid="stForm"] {
+        background: rgba(255,255,255,.96);
+        border: 1px solid #e6dfcf;
+        border-radius: 20px;
+        padding: 24px;
+        box-shadow: 0 16px 42px rgba(25,36,55,.10);
+      }
+      [data-testid="stForm"] button[kind="primaryFormSubmit"] {
+        background: linear-gradient(100deg, #17243a, #263d5b);
+        color: #fff;
+        border: 1px solid #c6a45a;
+        border-radius: 12px;
+        min-height: 48px;
+        font-weight: 700;
+      }
+      [data-testid="stForm"] input {
+        border-radius: 10px;
+      }
+      @media (max-width: 700px) {
+        [data-testid="stMainBlockContainer"] { padding: 18px 14px 30px 14px; }
+        [data-testid="stForm"] { padding: 16px; }
+      }
+    </style>
+    """, unsafe_allow_html=True)
+
+    login_left, login_center, login_right = st.columns([1, 1.15, 1], gap="large")
+    with login_center:
+        st.markdown("<div style='text-align:center;font-size:46px;margin-bottom:4px'>🌿</div>", unsafe_allow_html=True)
+        st.markdown("<div class='lubanur-login-title'>لبانور</div>", unsafe_allow_html=True)
+        st.markdown("<div class='lubanur-login-subtitle'>نظام الإدارة والمبيعات والمخزون</div>", unsafe_allow_html=True)
+        with st.form("lubanur_login_form", clear_on_submit=False, border=True):
+            selected_login_role = st.radio(
+                "نوع المستخدم",
+                options=["مدير النظام", "مشاهد"],
+                horizontal=True,
+                key="login_role_choice"
+            )
+            pwd = st.text_input("كلمة المرور", type="password", key="login_pass",
+                                placeholder="أدخل كلمة المرور")
+            login_submitted = st.form_submit_button("دخول إلى النظام", use_container_width=True)
+
+        if login_submitted:
+            expected_password = ADMIN_PASSWORD if selected_login_role == "مدير النظام" else VIEWER_PASSWORD
+            if not pwd:
+                st.warning("يرجى إدخال كلمة المرور أولاً.")
+            elif pwd == expected_password:
+                st.session_state.user_role = "admin" if selected_login_role == "مدير النظام" else "viewer"
+                st.session_state.authenticated = True
+                st.session_state.login_event_pending = (
+                    "تسجيل دخول المدير" if selected_login_role == "مدير النظام"
+                    else "تسجيل دخول مستخدم العرض"
+                )
+                st.rerun()
+            else:
+                st.error("كلمة المرور غير صحيحة لنوع المستخدم المحدد.")
     st.stop()
 
 IS_ADMIN = st.session_state.user_role == "admin"
@@ -231,11 +288,6 @@ def read_activity_log(path=DB_FILE):
     return pd.DataFrame(columns=AUDIT_COLUMNS)
 
 
-def collection_status_from_product_payment(order_payment):
-    """Collection of invoice products depends only on Order_Payment, never shipping fees."""
-    return "مدفوع بالكامل" if str(order_payment).strip() == "تم الدفع" else "قيد التحصيل"
-
-
 def normalize_orders_df(orders):
     if orders.empty:
         return pd.DataFrame(columns=["Order_ID", "Date", "Customer", "Phone", "Region", "Items_Detail", "Products_Total", "Shipping_Price", "Total", "Order_Payment", "Shipping_Payment", "Cargo_Company", "Delivery_Type", "Delivery_Status", "Collection_Status", "Bags", "Cargo_Barcode"])
@@ -286,8 +338,10 @@ def normalize_orders_df(orders):
                     orders[col] = orders[col].astype(int)
                     
     orders['Total'] = orders['Products_Total'] + orders['Shipping_Price']
-    # IMPORTANT: paying shipping alone must never change the products collection status.
-    orders['Collection_Status'] = orders['Order_Payment'].map(collection_status_from_product_payment)
+    # Product collection is determined ONLY by invoice/product payment, never shipping payment.
+    orders['Collection_Status'] = orders['Order_Payment'].astype(str).map(
+        lambda value: 'مدفوع بالكامل' if value.strip() == 'تم الدفع' else 'قيد التحصيل'
+    )
     return orders
 
 def parse_items_to_list(items_str):
@@ -835,8 +889,8 @@ elif menu == "تسجيل طلب جديد":
         delivery_type = st.selectbox("نوع التسليم (Delivery Type)", ["من المكتب (Pickup)", "إلى المنزل (Home Delivery)", "بدون"], key="new_dtype")
     with col_inf3:
         shipping_price = st.number_input("سعر الشحن (Shipping Price OMR)", min_value=0.0, value=1.0, key="new_ship_price")
-        order_payment = st.selectbox("حالة دفع المنتجات (Order Payment Status)", ["لم يتم الدفع", "تم الدفع"], key="new_ord_pay")
-        shipping_payment = st.selectbox("حالة دفع رسوم الشحن (مستقلة عن المنتجات)", ["لم يتم دفع الشحن", "تم دفع الشحن"], key="new_shp_pay")
+        order_payment = st.selectbox("حالة دفع الطلب (Order Payment Status)", ["لم يتم الدفع", "تم الدفع"], key="new_ord_pay")
+        shipping_payment = st.selectbox("حالة دفع قيمة الشحن (Shipping Payment Status)", ["لم يتم دفع الشحن", "تم دفع الشحن"], key="new_shp_pay")
         bags = st.number_input("عدد الأكياس (Bags)", min_value=0, value=1, key="new_bags")
 
     st.markdown("---")
@@ -892,7 +946,7 @@ elif menu == "تسجيل طلب جديد":
                     items_detail_str = " | ".join(items_summary_list)
                     grand_total = products_total + shipping_price
                     # Product collection is independent from shipping fee payment.
-                    coll_status = collection_status_from_product_payment(order_payment)
+                    coll_status = "مدفوع بالكامل" if order_payment == "تم الدفع" else "قيد التحصيل"
                 
                     new_row = {
                         "Order_ID": next_order_id, "Date": str(order_date), "Customer": cust_name, "Phone": phone, "Region": region,
@@ -997,64 +1051,25 @@ elif menu == "تتبع الشحنات والتحصيل":
                 "رقم الفاتورة": "Order_ID", "رقم ID": "Order_ID", "التاريخ": "Date",
                 "اسم العميل": "Customer", "رقم هاتف العميل": "Phone", "المنطقة": "Region",
                 "شركة الشحن": "Cargo_Company", "رقم الباركود": "Cargo_Barcode", "عدد الأكياس": "Bags",
-                "حالة دفع المنتجات": "Order_Payment", "حالة الدفع": "Order_Payment",
-                "دفع الشحن": "Shipping_Payment",
-                "حالة تسليم العميل": "Delivery_Status", "حالة الشحن والتوصيل": "Delivery_Status",
-                "تحصيل قيمة المنتجات": "Collection_Status", "حالة التحصيل": "Collection_Status",
-                "قيمة المنتجات": "Products_Total", "قيمة الشحن": "Shipping_Price",
-                "الإجمالي شامل الشحن": "Total"
+                "حالة الدفع": "Order_Payment", "حالة الشحن والتوصيل": "Delivery_Status",
+                "حالة التحصيل": "Collection_Status", "قيمة المنتجات": "Products_Total",
+                "قيمة الشحن": "Shipping_Price", "الإجمالي شامل الشحن": "Total"
             }
-            default_visible = [
-                "رقم الفاتورة", "التاريخ", "اسم العميل", "رقم هاتف العميل",
-                "حالة تسليم العميل", "حالة دفع المنتجات", "دفع الشحن", "تحصيل قيمة المنتجات"
-            ]
+            default_visible = ["رقم الفاتورة", "رقم ID", "رقم الباركود", "حالة الدفع", "حالة الشحن والتوصيل", "قيمة المنتجات", "رقم هاتف العميل"]
             selected_labels = st.multiselect(
                 "⚙️ تخصيص أعمدة جدول الشحنات (اختر ما تريد عرضه)",
                 options=list(column_labels.keys()), default=default_visible,
                 key="tracking_visible_columns"
             )
-            # Keep delivery tracking visible at all times, even if it was unchecked in an older session.
-            if not any(label in selected_labels for label in ["حالة تسليم العميل", "حالة الشحن والتوصيل"]):
-                selected_labels.append("حالة تسليم العميل")
             if not selected_labels:
-                selected_labels = ["رقم الفاتورة", "حالة تسليم العميل"]
-
+                selected_labels = ["رقم الفاتورة"]
             display_df = pd.DataFrame(index=filtered_df.index)
             for label in selected_labels:
                 source_col = column_labels[label]
                 display_df[label] = filtered_df[source_col]
-
-            # iPad/touch-friendly column sizing: choose a column and set its width in pixels.
-            st.markdown("#### ↔️ التحكم في عرض الأعمدة (مناسب للـ iPad)")
-            st.caption("اختر العمود ثم حرّك شريط العرض وحدد تطبيق. يمكنك ضبط كل عمود بشكل مستقل.")
-            saved_widths = st.session_state.setdefault("tracking_column_widths", {})
-            with st.form("tracking_column_width_form"):
-                width_target = st.selectbox(
-                    "العمود المطلوب تغيير عرضه", list(display_df.columns),
-                    key="tracking_width_target"
-                )
-                width_value = st.slider(
-                    "عرض العمود بالبكسل", min_value=80, max_value=520, step=10,
-                    value=int(saved_widths.get(width_target, 170)),
-                    key=f"tracking_width_slider_{width_target}"
-                )
-                apply_width = st.form_submit_button("تطبيق عرض العمود")
-            if apply_width:
-                saved_widths[width_target] = int(width_value)
-                st.success(f"تم ضبط عرض عمود «{width_target}» إلى {width_value} بكسل.")
-
-            table_column_config = {
-                label: st.column_config.Column(
-                    label=label,
-                    width=int(saved_widths.get(label, 170 if label not in ["رقم الفاتورة", "رقم ID"] else 110))
-                )
-                for label in display_df.columns
-            }
             event = st.dataframe(
                 display_df,
-                column_config=table_column_config,
                 use_container_width=True,
-                height=500,
                 selection_mode="single-row",
                 on_select="rerun",
                 key="orders_grid_select"
@@ -1064,7 +1079,7 @@ elif menu == "تتبع الشحنات والتحصيل":
             
             # تحديد الطلبية المختارة إما عن طريق النقر في الجدول أو القائمة المنسدلة
             st.markdown("---")
-            st.subheader("✏️ التعديل السريع: حالة تسليم العميل، دفع المنتجات، ودفع الشحن:")
+            st.subheader("✏️ قسم التعديل السريع لحالة الطلبية (التوصيل، الدفع، والشحن):")
             
             order_options_map = {row['Order_ID']: f"طلب #{row['Order_ID']} - العميل: {row['Customer']} (هاتف: {row['Phone']})" for idx, row in filtered_df.iterrows()}
             
@@ -1101,7 +1116,7 @@ elif menu == "تتبع الشحنات والتحصيل":
                 s_i = shipping_pay_options.index(cur_s_pay) if cur_s_pay in shipping_pay_options else 0
                 new_s_pay = q_col3.selectbox("دفع الشحن", shipping_pay_options, index=s_i)
                 
-                st.caption("تنبيه: دفع الشحن مستقل تماماً. حالة تحصيل قيمة المنتجات تعتمد فقط على (حالة دفع المنتجات)، ولا تتغير عند دفع رسوم الشحن وحدها.")
+                st.caption("حالة التحصيل تُحدد تلقائياً من حالة دفع المنتجات، ولا تتأثر بحالة دفع الشحن.")
                 
                 new_barcode_val = st.text_input("تعديل باركود شركة الشحن", value=str(target_order_row.get('Cargo_Barcode', '')))
                 
@@ -1109,7 +1124,7 @@ elif menu == "تتبع الشحنات والتحصيل":
                     orders_df.loc[orig_idx, 'Delivery_Status'] = new_d_stat
                     orders_df.loc[orig_idx, 'Order_Payment'] = new_o_pay
                     orders_df.loc[orig_idx, 'Shipping_Payment'] = new_s_pay
-                    orders_df.loc[orig_idx, 'Collection_Status'] = collection_status_from_product_payment(new_o_pay)
+                    orders_df.loc[orig_idx, 'Collection_Status'] = 'مدفوع بالكامل' if new_o_pay == 'تم الدفع' else 'قيد التحصيل'
                     orders_df.loc[orig_idx, 'Cargo_Barcode'] = new_barcode_val
                     
                     cargo_df_save = pd.DataFrame({"Cargo_Name": cargo_companies_list})
@@ -1330,17 +1345,45 @@ elif menu == "تقرير الشحن":
                 "رقم الهاتف": filtered_cargo_df['Phone'],
                 "مكان التوصيل (المنطقة)": filtered_cargo_df['Region'],
                 "عدد الأكياس": filtered_cargo_df['Bags'],
+                "حالة تسليم العميل": filtered_cargo_df['Delivery_Status'],
                 "قيمة مبيعات المنتجات (ر.ع)": filtered_cargo_df['Products_Total'],
                 "حالة تحصيل المنتجات": filtered_cargo_df['Order_Payment'],
                 "المحصل من المنتجات (ر.ع)": filtered_cargo_df.apply(lambda r: r['Products_Total'] if str(r['Order_Payment']) == 'تم الدفع' else 0, axis=1),
                 "المتبقي من المنتجات (ر.ع)": filtered_cargo_df.apply(lambda r: 0 if str(r['Order_Payment']) == 'تم الدفع' else r['Products_Total'], axis=1),
-                "رسوم الشحن (للشركة مباشرة)": filtered_cargo_df['Shipping_Price'],
+                "رسوم الشحن (للشركة مباشرة - خارج إيرادات لبانور)": filtered_cargo_df['Shipping_Price'],
                 "حالة دفع الشحن": filtered_cargo_df['Shipping_Payment'],
                 "باركود الشحن": filtered_cargo_df['Cargo_Barcode'],
             })
 
             st.markdown(f"### 📋 بيان شحنات شركة: **{selected_cargo}** (إجمالي الشحنات: {len(report_display_df)})")
-            st.dataframe(report_display_df, use_container_width=True)
+            st.caption("حالة تسليم العميل موضحة لكل فاتورة. رسوم الشحن تخص شركة الشحن فقط، وتُعرض للمطابقة التشغيلية ولا تدخل في إيرادات لبانور أو تحصيل المنتجات.")
+            # Widths are adjustable per column in the expander, including on touch screens.
+            report_widths = {}
+            width_labels = {"ضيق": "small", "متوسط": "medium", "واسع": "large"}
+            with st.expander("⚙️ التحكم في عرض أعمدة تقرير الشحن (مناسب للـ iPad)"):
+                st.caption("اختر عرض كل عمود، ثم أغلق القائمة لعرض التقرير. يمكن التمرير أفقياً لبقية الأعمدة.")
+                report_col_names = list(report_display_df.columns)
+                for pair_start in range(0, len(report_col_names), 2):
+                    width_cols = st.columns(2)
+                    for slot, col_name in enumerate(report_col_names[pair_start:pair_start + 2]):
+                        with width_cols[slot]:
+                            width_choice = st.selectbox(
+                                f"عرض: {col_name}",
+                                options=list(width_labels.keys()),
+                                index=1,
+                                key=f"cargo_report_width_{pair_start}_{slot}"
+                            )
+                            report_widths[col_name] = width_labels[width_choice]
+            report_column_config = {
+                col_name: st.column_config.Column(width=report_widths.get(col_name, "medium"))
+                for col_name in report_display_df.columns
+            }
+            st.dataframe(
+                report_display_df,
+                use_container_width=True,
+                hide_index=True,
+                column_config=report_column_config
+            )
             products_sales = pd.to_numeric(filtered_cargo_df['Products_Total'], errors='coerce').fillna(0).sum()
             products_collected = pd.to_numeric(filtered_cargo_df.loc[filtered_cargo_df['Order_Payment'].astype(str).eq('تم الدفع'), 'Products_Total'], errors='coerce').fillna(0).sum()
             products_pending = products_sales - products_collected
@@ -1349,7 +1392,7 @@ elif menu == "تقرير الشحن":
             k1.metric("مبيعات المنتجات", f"{products_sales:.3f} ر.ع")
             k2.metric("المحصل", f"{products_collected:.3f} ر.ع")
             k3.metric("المبيعات غير المحصلة / المتبقي", f"{products_pending:.3f} ر.ع")
-            st.caption("رسوم الشحن معروضة للمراجعة التشغيلية فقط؛ فهي تخص شركة الشحن ولا تدخل في حسابات لبانور.")
+            st.caption("رسوم الشحن معروضة للمراجعة التشغيلية فقط؛ فهي تخص شركة الشحن ولا تدخل في إيرادات لبانور أو تحصيل المنتجات. إجمالي الفاتورة قد يعرضها للعميل كبند منفصل، لكن التقارير المالية تحتسب قيمة المنتجات فقط.")
         else:
             st.warning("لا توجد شحنات مطابقة لخيارات البحث المحددة.")
     else:
@@ -1615,7 +1658,7 @@ elif menu == "التقرير المالي التفصيلي":
     m2.metric("المحصل من مبيعات المنتجات", f"{total_collected_cash:.3f} ر.ع")
     m3.metric("المبيعات غير المحصلة", f"{pending_products_total:.3f} ر.ع")
     m4.metric("💰 صافي التدفق النقدي (بدون الشحن)", f"{actual_treasury:.3f} ر.ع")
-    st.caption(f"رسوم الشحن خارج حسابات لبانور وتُدفع مباشرة لشركات الشحن — مدفوع لشركات الشحن: {shipping_paid:.3f} ر.ع | متبقٍ لشركات الشحن: {shipping_pending:.3f} ر.ع | إجمالي رسوم الشحن: {total_shipping:.3f} ر.ع. لا تدخل هذه المبالغ في المبيعات أو التحصيل أو صافي التدفق النقدي.")
+    st.caption(f"تنبيه محاسبي: رسوم الشحن ليست إيراداً أو مصروفاً أو تحصيلاً خاصاً بلبانور؛ هي مبالغ تخص شركة الشحن وتُدفع لها مباشرة. وتظهر هنا للمطابقة فقط — مدفوع لشركات الشحن: {shipping_paid:.3f} ر.ع | متبقٍ لشركات الشحن: {shipping_pending:.3f} ر.ع | إجمالي رسوم الشحن: {total_shipping:.3f} ر.ع. لا تدخل هذه المبالغ في المبيعات أو التحصيل أو صافي التدفق النقدي.")
     
     st.markdown("---")
     cargo_summary = get_cargo_summary_df(orders_df)
