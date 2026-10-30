@@ -1150,13 +1150,20 @@ elif menu == "تتبع الشحنات والتحصيل":
         filtered_df = filtered_df.copy()
         filtered_df['Collection_Status'] = filtered_df['Order_Payment'].map(lambda v: 'مدفوع بالكامل' if str(v).strip() == 'تم الدفع' else 'قيد التحصيل')
         total_due_amt = filtered_df[filtered_df['Order_Payment'] != 'تم الدفع']['Products_Total'].sum()
-        total_undelivered = len(filtered_df[filtered_df['Delivery_Status'] != 'تم تسليم العميل'])
+        # Count only orders explicitly marked as awaiting collection by the courier.
+        # Prepaid and already-collected orders are excluded regardless of delivery status.
+        carrier_pending_count = int(
+            filtered_df.get(
+                'Carrier_Collection_Status',
+                pd.Series('', index=filtered_df.index)
+            ).astype(str).str.strip().eq('قيد التحصيل من شركة الشحن').sum()
+        )
         
         st.markdown("---")
         m1, m2, m3 = st.columns(3)
         m1.metric("عدد الشحنات الظاهرة", len(filtered_df))
         m2.metric("إجمالي المبالغ المستحقة (منتجات فقط)", f"{total_due_amt:.3f} ر.ع")
-        m3.metric("الطلبيات التي لم تسلم بعد", total_undelivered)
+        m3.metric("عدد الطلبيات غير المحصلة من شركة الشحن", carrier_pending_count)
         
         st.markdown("---")
         st.subheader("📋 جدول الشحنات والطلبيات المطابقة:")
